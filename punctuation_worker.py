@@ -1,11 +1,17 @@
 """YouTube transcript worker that restores punctuation using deepmultilingualpunctuation."""
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, List, Optional
 from urllib.parse import parse_qs, urlparse
+
+# Limit CPU threads to reduce memory usage (prevents my Mac from freezing with low RAM)
+os.environ["OMP_NUM_THREADS"] = "2"
+os.environ["MKL_NUM_THREADS"] = "2"
+os.environ["NUMEXPR_NUM_THREADS"] = "2"
 
 from deepmultilingualpunctuation import PunctuationModel
 from youtube_transcript_api import (
@@ -141,9 +147,16 @@ def run_sample_job() -> Path:
     """Run a sample worker job for local testing."""
     sample_link = "https://www.youtube.com/watch?v=HbDqLPm_2vY"
 
-    worker = PunctuationWorker()
+    print("🔄 Loading AI model (faster, less memory)...")
+    worker = PunctuationWorker(model_name="oliverguhr/fullstop-punctuation-multilingual-base")
+    print("✓ Model loaded!")
+    
+    print("🔄 Fetching transcript from YouTube...")
     job = TranscriptJob(youtube_url=sample_link)
+    
+    print("🔄 Restoring punctuation (this may take 30-60s)...")
     result_path = worker(job)
+    print("✓ Done!")
     return result_path
 
 
