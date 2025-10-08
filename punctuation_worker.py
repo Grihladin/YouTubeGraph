@@ -124,13 +124,8 @@ class PunctuationWorker:
     @staticmethod
     def _normalise_snippet_text(snippet) -> str:
         """Return a single-line snippet string from a transcript snippet."""
-        # Handle both dict and FetchedTranscriptSnippet objects
-        if hasattr(snippet, 'text'):
-            text = snippet.text
-        elif isinstance(snippet, dict):
-            text = snippet.get("text", "")
-        else:
-            text = str(snippet)
+        # FetchedTranscriptSnippet has a 'text' attribute
+        text = snippet.text
         return text.replace("\n", " ").strip()
 
     def _resolve_output_path(self, job: TranscriptJob, video_id: str) -> Path:
