@@ -232,7 +232,7 @@ class PunctuationWorker:
     @staticmethod
     def _word_ends_sentence(word: str) -> bool:
         """Determine if a word ends a sentence."""
-        trimmed = word.rstrip('"\')]}»”’»›')
+        trimmed = word.rstrip("\"')]}»”’»›")
         return bool(trimmed) and trimmed[-1] in {".", "!", "?"}
 
     @staticmethod
@@ -247,7 +247,10 @@ class PunctuationWorker:
 
     @staticmethod
     def _sentences_to_segments(
-        sentences: Sequence[dict], video_id: str, min_tokens: int = 120, max_tokens: int = 320
+        sentences: Sequence[dict],
+        video_id: str,
+        min_tokens: int = 120,
+        max_tokens: int = 320,
     ) -> List[TranscriptSegment]:
         """Group sentences into chunked transcript segments."""
         if not sentences:
@@ -295,9 +298,7 @@ class PunctuationWorker:
 
         return segments
 
-    def _format_transcript_text(
-        self, segments: Sequence[TranscriptSegment]
-    ) -> str:
+    def _format_transcript_text(self, segments: Sequence[TranscriptSegment]) -> str:
         """Render structured segments back to transcript text with timestamps."""
         lines: List[str] = []
         for segment in segments:

@@ -54,7 +54,9 @@ def parse_transcript_file(file_path: Path) -> List[TranscriptSegment]:
     video_id = file_path.stem.replace("transcript_", "")
 
     # Split by double newlines to separate segments
-    raw_segments = [chunk.strip() for chunk in content.strip().split("\n\n") if chunk.strip()]
+    raw_segments = [
+        chunk.strip() for chunk in content.strip().split("\n\n") if chunk.strip()
+    ]
 
     segments = []
     for raw_segment in raw_segments:
@@ -133,7 +135,7 @@ class WeaviateUploader:
         self.client = weaviate.connect_to_weaviate_cloud(
             cluster_url=cluster_url,
             auth_credentials=Auth.api_key(api_key),
-            headers={"X-OpenAI-Api-Key": self.openai_api_key}
+            headers={"X-OpenAI-Api-Key": self.openai_api_key},
         )
 
         print(f"✓ Connected to Weaviate cluster: {cluster_url}")
