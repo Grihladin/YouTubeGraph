@@ -78,23 +78,29 @@ class RelationshipExtractor:
         print("\n🔁 Phase 1: Intra-group relationships")
         intra_count = 0
         empty_text_groups = []
-        
+
         for extracted_concepts in video_concepts:
             # Debug: Check if group_text is populated
-            print(f"  📝 Group {extracted_concepts.group_id}: {len(extracted_concepts.concepts)} concepts, group_text length: {len(extracted_concepts.group_text)}")
-            
+            print(
+                f"  📝 Group {extracted_concepts.group_id}: {len(extracted_concepts.concepts)} concepts, group_text length: {len(extracted_concepts.group_text)}"
+            )
+
             if not extracted_concepts.group_text:
                 empty_text_groups.append(extracted_concepts.group_id)
-            
+
             relationships = self.intra_group_detector.detect_relationships(
                 extracted_concepts
             )
             all_relationships.extend(relationships)
             intra_count += len(relationships)
-        
+
         if empty_text_groups:
-            print(f"  ⚠️  WARNING: {len(empty_text_groups)} groups have empty group_text: {empty_text_groups}")
-            print(f"     This will prevent relationship detection. Ensure groups are loaded with their text.")
+            print(
+                f"  ⚠️  WARNING: {len(empty_text_groups)} groups have empty group_text: {empty_text_groups}"
+            )
+            print(
+                f"     This will prevent relationship detection. Ensure groups are loaded with their text."
+            )
 
         print(f"  ✓ Found {intra_count} intra-group relationships")
 
@@ -129,7 +135,9 @@ class RelationshipExtractor:
 
         return result
 
-    def extract_from_graph(self, video_id: str, groups_json_path: Optional[Path] = None) -> ExtractedRelationships:
+    def extract_from_graph(
+        self, video_id: str, groups_json_path: Optional[Path] = None
+    ) -> ExtractedRelationships:
         """Extract relationships from concepts stored in Neo4j for a single video.
 
         Args:
@@ -170,7 +178,7 @@ class RelationshipExtractor:
             group_text = group_texts.get(group_id, "")
             if not group_text:
                 print(f"⚠️  Warning: No text found for group {group_id}")
-            
+
             extracted = ExtractedConcepts(
                 video_id=video_id,
                 group_id=group_id,
