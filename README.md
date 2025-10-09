@@ -12,6 +12,7 @@ YouTubeGraph is a Python-based pipeline that processes YouTube video transcripts
 - 📝 **Intelligent Segmentation** - Groups transcript segments by semantic similarity
 - ⏱️ **Temporal Awareness** - Maintains narrative flow with time-decay penalties
 - 🔍 **Vector Search** - Weaviate integration for k-NN similarity queries
+- 🧠 **LLM Concept Extraction** - Extract key concepts from groups using GPT ✨ NEW
 - 📊 **Rich Analytics** - Visualizations and diagnostics for group quality
 - 🚀 **Production Ready** - Clean architecture, type hints, comprehensive docs
 
@@ -24,18 +25,27 @@ YouTubeGraph/
 │       ├── transcript_models.py  # Data models
 │       ├── punctuation_worker.py # Transcript fetching & cleaning
 │       ├── weaviate_uploader.py  # Weaviate integration
-│       └── segment_grouper.py    # Semantic grouping algorithm
+│       ├── segment_grouper.py    # Semantic grouping algorithm
+│       ├── concept_models.py     # ✨ Concept data models
+│       ├── concept_extractor.py  # ✨ LLM-powered extraction
+│       └── concept_uploader.py   # ✨ Concept storage
 │
 ├── scripts/                      # Executable scripts  
 │   ├── pipeline.py              # End-to-end processing pipeline
 │   ├── test_groups_quality.py   # Main quality validation (⭐ primary test)
 │   ├── visualize_groups.py      # Analytics & visualization
-│   └── diagnose_embeddings.py   # Embedding quality diagnostics
+│   ├── diagnose_embeddings.py   # Embedding quality diagnostics
+│   ├── init_concept_schema.py   # ✨ Initialize concept schema
+│   ├── extract_concepts.py      # ✨ Extract concepts from groups
+│   └── query_concepts.py        # ✨ Query and analyze concepts
 │
 ├── docs/                         # Documentation
 │   ├── GROUP_SEGMENTS.md         # Grouping strategy details
 │   ├── README_GROUPING.md        # Grouping module guide
-│   └── IMPLEMENTATION_SUMMARY.md # Implementation overview
+│   ├── IMPLEMENTATION_SUMMARY.md # Implementation overview
+│   ├── CONCEPT_SCHEMA.md         # ✨ Concept schema design
+│   ├── PHASE1_IMPLEMENTATION.md  # ✨ Phase 1 guide
+│   └── PHASE1_SUMMARY.md         # ✨ Phase 1 summary
 │
 ├── output/                       # Generated files
 │   ├── transcripts/             # Processed transcripts
@@ -182,6 +192,24 @@ python scripts/visualize_groups.py
 # Diagnose low quality issues
 python scripts/diagnose_embeddings.py VIDEO_ID
 ```
+
+#### ✨ NEW: Concept Extraction (Phase 1)
+
+```bash
+# Initialize concept schema (one-time)
+python scripts/init_concept_schema.py
+
+# Extract concepts from groups
+python scripts/extract_concepts.py VIDEO_ID
+python scripts/extract_concepts.py --all  # Process all videos
+
+# Query and analyze concepts
+python scripts/query_concepts.py VIDEO_ID
+python scripts/query_concepts.py --search "machine learning"
+python scripts/query_concepts.py --quality VIDEO_ID
+```
+
+See [docs/PHASE1_IMPLEMENTATION.md](docs/PHASE1_IMPLEMENTATION.md) for complete guide.
 
 ## 🧠 How It Works
 
