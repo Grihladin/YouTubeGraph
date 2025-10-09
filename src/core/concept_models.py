@@ -110,7 +110,7 @@ class Concept:
         """
         # Format datetime as RFC3339 with 'Z' suffix for UTC
         extracted_at_rfc3339 = self.extracted_at.isoformat() + "Z"
-        
+
         return {
             "name": self.name,
             "definition": self.definition,
