@@ -49,7 +49,9 @@ def print_quality_report(groups, video_id: str) -> dict:
 
     in_range = sum(1 for w in word_counts if 400 <= w <= 800)
     pct_in_range = in_range / len(groups) * 100
-    print(f"   • In target range (400-800): {in_range}/{len(groups)} ({pct_in_range:.0f}%)")
+    print(
+        f"   • In target range (400-800): {in_range}/{len(groups)} ({pct_in_range:.0f}%)"
+    )
 
     if pct_in_range >= 70:
         print(f"   ✅ PASS: ≥70% groups in target range")
@@ -223,11 +225,11 @@ def print_sample_groups(groups, num_samples: int = 3):
         MAX_WIDTH = 57
         words = group.text.split()
         current_line = ""
-        
+
         for word in words:
             # Check if adding this word would exceed width
             test_line = current_line + (" " if current_line else "") + word
-            
+
             if len(test_line) <= MAX_WIDTH:
                 current_line = test_line
             else:
@@ -235,15 +237,13 @@ def print_sample_groups(groups, num_samples: int = 3):
                 if current_line:
                     print(f"┃    │ {current_line:<57} │")
                 current_line = word
-        
+
         # Print last line
         if current_line:
             print(f"┃    │ {current_line:<57} │")
 
         print(f"┃    └─────────────────────────────────────────────────────────┘")
-        print(
-            f"┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        )
+        print(f"┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 
 
 def test_single_video(video_id: str, grouper: SegmentGrouper) -> dict:

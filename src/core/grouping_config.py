@@ -17,18 +17,14 @@ These parameters have been tested and optimized for:
 TUNED_PARAMS = {
     # k-NN search parameters
     "k_neighbors": 8,  # Number of nearest neighbors to consider
-    
     # Similarity thresholds (0-1 scale, after temporal decay)
     "neighbor_threshold": 0.80,  # Min similarity to be considered a neighbor (stricter)
     "adjacent_threshold": 0.70,  # Min similarity to join adjacent segments (stricter)
-    
     # Temporal parameters
     "temporal_tau": 150.0,  # Time decay constant in seconds (half-life ~2.5 min)
-    
     # Group size constraints
     "max_group_words": 700,  # Max words per group (smaller for focused groups)
     "min_group_segments": 2,  # Min segments per group
-    
     # Post-processing parameters
     "merge_centroid_threshold": 0.85,  # Min similarity to merge adjacent groups (less aggressive)
 }
@@ -72,13 +68,13 @@ RELAXED_PARAMS = {
 
 def get_params(preset: str = "tuned") -> dict:
     """Get parameter preset by name.
-    
+
     Args:
         preset: One of "tuned", "default", "strict", "relaxed"
-        
+
     Returns:
         Dictionary of hyperparameters
-        
+
     Raises:
         ValueError: If preset name is invalid
     """
@@ -88,12 +84,12 @@ def get_params(preset: str = "tuned") -> dict:
         "strict": STRICT_PARAMS,
         "relaxed": RELAXED_PARAMS,
     }
-    
+
     if preset not in presets:
         raise ValueError(
             f"Invalid preset '{preset}'. Choose from: {list(presets.keys())}"
         )
-    
+
     return presets[preset].copy()
 
 

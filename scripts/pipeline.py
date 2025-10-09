@@ -89,7 +89,7 @@ class YouTubeToWeaviatePipeline:
             }
             # Override defaults with user-provided params
             final_params = {**tuned_defaults, **(grouping_params or {})}
-            
+
             self.grouper = SegmentGrouper(
                 weaviate_url=self.weaviate_url,
                 weaviate_api_key=self.weaviate_api_key,
@@ -134,7 +134,7 @@ class YouTubeToWeaviatePipeline:
         job = TranscriptJob(
             youtube_url=youtube_url,
             languages=languages,
-            output_dir=Path("output/transcripts")  # Save to output/transcripts/
+            output_dir=Path("output/transcripts"),  # Save to output/transcripts/
         )
 
         try:
