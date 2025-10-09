@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 import weaviate
 from weaviate.classes.init import Auth
 
-from transcript_models import TranscriptSegment
+from .transcript_models import TranscriptSegment
 
 # Load environment variables from .env file
 load_dotenv()

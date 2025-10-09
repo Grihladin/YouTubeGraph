@@ -21,7 +21,7 @@ from youtube_transcript_api import (
     VideoUnavailable,
 )
 
-from transcript_models import TranscriptResult, TranscriptSegment
+from .transcript_models import TranscriptResult, TranscriptSegment
 
 
 @dataclass

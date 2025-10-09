@@ -6,10 +6,15 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from dotenv import load_dotenv
+import sys
+from pathlib import Path
 
-from punctuation_worker import PunctuationWorker, TranscriptJob
-from weaviate_uploader import WeaviateUploader
+# Add src/ to path
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+from dotenv import load_dotenv
+from core.punctuation_worker import PunctuationWorker, TranscriptJob
+from core.weaviate_uploader import WeaviateUploader
 
 # Load environment variables
 load_dotenv()
