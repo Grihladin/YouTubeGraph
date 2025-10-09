@@ -5,10 +5,10 @@ import sys
 import sys
 from pathlib import Path
 
-# Add src/ to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.segment_grouper import SegmentGrouper
+from src.core.segment_grouper import SegmentGrouper
 
 
 def test_single_video(video_id: str, verbose: bool = True):

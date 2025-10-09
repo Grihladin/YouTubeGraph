@@ -48,6 +48,8 @@ YouTubeGraph/
 
 ## 🚀 Quick Start
 
+> 💡 **New user?** Check out [QUICKSTART.md](QUICKSTART.md) for a 5-minute getting started guide!
+
 ### 1. Installation
 
 ```bash
@@ -74,13 +76,46 @@ OPENAI_API_KEY=your-openai-api-key
 
 ### 3. Basic Usage
 
-#### Process a Single Video
+#### Option A: Full Pipeline (Recommended) 🚀
+
+Process everything automatically: fetch → punctuate → upload → group
+
+```python
+import sys
+sys.path.insert(0, 'src')
+sys.path.insert(0, 'scripts')
+
+from pipeline import YouTubeToWeaviatePipeline
+
+# Initialize pipeline with grouping enabled
+pipeline = YouTubeToWeaviatePipeline(
+    enable_grouping=True,  # Automatically group segments
+    grouping_params={
+        "k_neighbors": 8,
+        "neighbor_threshold": 0.80,
+        "adjacent_threshold": 0.70,
+        "max_group_words": 700,
+    }
+)
+
+# Process a video end-to-end
+result = pipeline.process_video("https://www.youtube.com/watch?v=VIDEO_ID")
+
+print(f"✅ Segments: {result['segment_count']}")
+print(f"✅ Groups: {result['group_count']}")
+
+pipeline.close()
+```
+
+#### Option B: Step-by-Step Processing
+
+If you need more control over each step:
 
 ```python
 import sys
 sys.path.insert(0, 'src')
 
-from core import PunctuationWorker, TranscriptJob, WeaviateUploader
+from core import PunctuationWorker, TranscriptJob, WeaviateUploader, SegmentGrouper
 
 # Step 1: Fetch and process transcript
 worker = PunctuationWorker()
@@ -93,43 +128,78 @@ result = worker(job)
 # Step 2: Upload to Weaviate
 uploader = WeaviateUploader()
 uploader.upload_segments(result.segments)
-uploader.close()
-```
 
-#### Group Segments
-
-```python
-from core import SegmentGrouper
-
+# Step 3: Group segments
 grouper = SegmentGrouper()
-groups = grouper.group_video("VIDEO_ID")
+groups = grouper.group_video(result.video_id)
 
 # Export results
 from pathlib import Path
 grouper.export_groups_to_json(groups, Path("output/groups/my_video.json"))
+
+# Cleanup
+uploader.close()
 grouper.close()
 ```
 
 ### 4. Using Scripts
 
-```bash
-# Process video end-to-end (fetch → punctuate → upload)
-python scripts/pipeline.py
+#### Full Pipeline (Fetch + Upload + Group)
 
-# Group all uploaded videos
+```bash
+# Process video end-to-end: fetch → punctuate → upload → group
+python scripts/pipeline.py
+```
+
+This automatically:
+- ✅ Fetches YouTube transcript
+- ✅ Restores punctuation
+- ✅ Uploads segments to Weaviate
+- ✅ Groups segments semantically
+- ✅ Saves groups to `output/groups/`
+
+#### Grouping Existing Videos
+
+```bash
+# Group videos already in Weaviate
 python scripts/run_grouping.py
+
+# With tuned parameters (for better cohesion)
+python scripts/run_tuned_grouping.py
 
 # Test single video with diagnostics
 python scripts/test_grouping.py VIDEO_ID --verbose
+```
 
-# Analyze grouping quality
+#### Analysis & Diagnostics
+
+```bash
+# Visualize grouping quality
 python scripts/visualize_groups.py
 
-# Diagnose embedding similarities
+# Diagnose embedding similarities (tune hyperparameters)
 python scripts/diagnose_embeddings.py VIDEO_ID
 ```
 
 ## 🧠 How It Works
+
+### Complete Pipeline
+
+```
+YouTube URL 
+    ↓
+Fetch Transcript
+    ↓
+Restore Punctuation
+    ↓
+Segment (150-300 words)
+    ↓
+Upload to Weaviate (with embeddings)
+    ↓
+Semantic Grouping (400-800 words)
+    ↓
+Topic Groups (JSON output)
+```
 
 ### 1. Transcript Processing
 
@@ -234,11 +304,20 @@ Good grouping results show:
 
 ### Workflow
 
+#### Quick Start (Full Pipeline)
+
+1. **Set up environment** - Create `.env` with API keys
+2. **Run pipeline** - `python scripts/pipeline.py` (processes and groups automatically)
+3. **Visualize** - `python scripts/visualize_groups.py` to check quality
+4. **Iterate** - Adjust `grouping_params` in pipeline if needed
+
+#### Advanced (Manual Control)
+
 1. **Start Small** - Test with 1-2 videos first
-2. **Diagnose** - Run `diagnose_embeddings.py` to understand similarity distribution
+2. **Diagnose** - Run `python scripts/diagnose_embeddings.py VIDEO_ID` to understand similarity
 3. **Tune** - Adjust hyperparameters based on diagnostics
-4. **Validate** - Use `visualize_groups.py` to check quality
-5. **Scale** - Batch process with `run_grouping.py`
+4. **Validate** - Use `python scripts/visualize_groups.py` to check quality
+5. **Scale** - Batch process with `python scripts/run_grouping.py`
 
 ## 📚 Documentation
 
@@ -246,14 +325,30 @@ Good grouping results show:
 - **[README_GROUPING.md](docs/README_GROUPING.md)** - User guide for segment grouping
 - **[IMPLEMENTATION_SUMMARY.md](docs/IMPLEMENTATION_SUMMARY.md)** - Implementation details and next steps
 
+## 🎯 Current Status
+
+### ✅ Completed
+- [x] YouTube transcript fetching
+- [x] Punctuation restoration
+- [x] Semantic segmentation (150-300 words)
+- [x] Weaviate upload with embeddings
+- [x] Semantic grouping (400-800 words)
+- [x] Temporal coherence preservation
+- [x] Automated end-to-end pipeline
+- [x] Quality analytics & visualization
+
+### 🚧 In Progress
+- [ ] LLM-based concept extraction from groups
+- [ ] Cue-phrase detection and cross-references
+
 ## 🔮 Future Enhancements
 
-- [ ] LLM-based concept extraction from groups
 - [ ] Cross-video concept linking
 - [ ] Neo4j knowledge graph integration
 - [ ] Hierarchical grouping (groups → topics → themes)
 - [ ] Web UI for interactive exploration
 - [ ] Multi-language support
+- [ ] Real-time streaming support
 
 ## 🤝 Contributing
 
