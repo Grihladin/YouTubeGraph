@@ -1,7 +1,7 @@
-"""Extract concepts from video groups and upload to Weaviate.
+"""Extract concepts from video groups and upload to Neo4j.
 
 This script processes JSON files containing grouped segments and extracts
-key concepts using an LLM, then uploads them to Weaviate for graph construction.
+key concepts using an LLM, then uploads them to Neo4j for graph construction.
 
 Usage:
     python scripts/extract_concepts.py VIDEO_ID [VIDEO_ID2 ...]
@@ -147,7 +147,7 @@ def extract_concepts_from_video(
             stats["groups_processed"] += 1
             stats["concepts_extracted"] += len(extracted.concepts)
 
-            # Upload to Weaviate
+            # Upload to Neo4j
             upload_stats = uploader.upload_extracted_concepts(extracted)
             stats["concepts_uploaded"] += upload_stats["concepts_success"]
             stats["concepts_failed"] += upload_stats["concepts_failed"]
@@ -270,8 +270,9 @@ def main():
         print(f"❌ Initialization failed: {e}")
         print("\nCheck that your .env file contains:")
         print("  - OPENAI_API_KEY")
-        print("  - WEAVIATE_URL")
-        print("  - WEAVIATE_API_KEY")
+        print("  - NEO4J_URI")
+        print("  - NEO4J_USER")
+        print("  - NEO4J_PASSWORD")
         sys.exit(1)
 
     # Process each video

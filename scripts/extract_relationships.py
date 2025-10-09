@@ -1,262 +1,492 @@
-"""Extract relationships between concepts (Phase 2 Foundation).
+#!/usr/bin/env python3
+"""Extract relationships between concepts within a single video.
 
-This script analyzes concepts and identifies relationships between them.
-Currently provides co-occurrence analysis and similarity-based relationships.
-
-Future phases will add:
-- LLM-based relationship extraction
-- Cross-video concept linking
-- Hierarchical relationship discovery
+Phase 2 of the pipeline identifies typed edges between concepts that were
+extracted in Phase 1. The detector can ingest concepts either from the saved
+JSON artifacts or directly from Neo4j, then produces intra-group and
+inter-group relationships using pattern matching, cue phrases, semantic
+similarity, and temporal proximity.
 
 Usage:
-    python scripts/extract_relationships.py VIDEO_ID        # Analyze one video
-    python scripts/extract_relationships.py VIDEO_ID1 VIDEO_ID2  # Multiple videos
-    python scripts/extract_relationships.py --all           # All videos
+    python scripts/extract_relationships.py VIDEO_ID [VIDEO_ID2 ...] [options]
+
+Options:
+    --from-json            Load concepts from ``output/concepts`` instead of querying Neo4j
+    --concepts-dir PATH    Override directory for concept JSON files (default: output/concepts)
+    --save                 Persist relationships to ``output/relationships``
+    --output-dir PATH      Override relationships output directory
+    --upload               Upload relationships to Neo4j (default when no action flags provided)
+    --overwrite            Delete existing relationships for the video before uploading
+    --min-confidence VAL   Minimum confidence threshold to keep relationships (default: 0.6)
 """
 
+from __future__ import annotations
+
+import argparse
+import json
+import os
 import sys
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+from dotenv import load_dotenv
+from openai import OpenAI
 
-from core.concept_uploader import ConceptUploader
+# Add project root so we can import from src
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.core.concept_models import Concept, ExtractedConcepts  # type: ignore  # noqa: E402
+from src.core.neo4j_graph import Neo4jGraph  # type: ignore  # noqa: E402
+from src.core.relationship_extractor import RelationshipExtractor  # type: ignore  # noqa: E402
+from src.core.relationship_models import ExtractedRelationships  # type: ignore  # noqa: E402
+from src.core.relationship_uploader import RelationshipUploader  # type: ignore  # noqa: E402
 
 
-def analyze_concept_relationships(uploader: ConceptUploader, video_id: str):
-    """Analyze relationships between concepts in a video.
+@dataclass(slots=True)
+class ExtractionOutcome:
+    """Convenience container for reporting results per video."""
 
-    Args:
-        uploader: ConceptUploader instance
-        video_id: Video identifier
-    """
-    print(f"\n{'='*70}")
-    print(f"🔗 Relationship Analysis: {video_id}")
-    print(f"{'='*70}")
+    video_id: str
+    relationships: ExtractedRelationships
+    saved_path: Optional[Path] = None
+    upload_stats: Optional[dict[str, int]] = None
 
-    concepts = uploader.get_concepts_for_video(video_id)
 
-    if not concepts:
-        print("\n❌ No concepts found for this video")
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Phase 2 relationship extraction for one or more videos",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("video_ids", nargs="+", help="One or more video identifiers")
+    parser.add_argument(
+        "--from-json",
+        action="store_true",
+        help="Load concepts from JSON files instead of querying Neo4j",
+    )
+    parser.add_argument(
+        "--concepts-dir",
+        type=Path,
+        default=Path("output/concepts"),
+        help="Directory containing concepts_<VIDEO_ID>.json (default: output/concepts)",
+    )
+    parser.add_argument(
+        "--groups-dir",
+        type=Path,
+        default=Path("output/groups"),
+        help="Directory containing groups_<VIDEO_ID>.json for group text fallback (default: output/groups)",
+    )
+    parser.add_argument(
+        "--save",
+        action="store_true",
+        help="Save extracted relationships to output/relationships/relationships_<VIDEO_ID>.json",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("output/relationships"),
+        help="Directory where relationship JSON files will be written",
+    )
+    parser.add_argument(
+        "--upload",
+        action="store_true",
+        help="Upload relationships to Neo4j",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Delete existing relationships for the video before uploading",
+    )
+    parser.add_argument(
+        "--min-confidence",
+        type=float,
+        default=0.6,
+        help="Minimum confidence threshold for detected relationships (default: 0.6)",
+    )
+    return parser.parse_args()
+
+
+def ensure_actions(args: argparse.Namespace) -> None:
+    """Ensure at least one action (save/upload) is requested.
+
+    If no explicit action flag is provided, default to uploading to Neo4j,
+    matching the workflow described in the Phase 2 README."""
+
+    if not args.save and not args.upload:
+        args.upload = True
+
+
+def connect_neo4j() -> Neo4jGraph:
+    """Create a Neo4j client using environment variables."""
+
+    uri = os.getenv("NEO4J_URI")
+    user = os.getenv("NEO4J_USER")
+    password = os.getenv("NEO4J_PASSWORD")
+    database = os.getenv("NEO4J_DATABASE")
+
+    if not all([uri, user, password]):
+        raise RuntimeError(
+            "Missing environment variables. Set NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD."
+        )
+
+    graph = Neo4jGraph(uri=uri, user=user, password=password, database=database)
+    print("📡 Connected to Neo4j")
+    return graph
+
+
+def load_concepts_from_json(
+    video_id: str, concepts_dir: Path
+) -> list[ExtractedConcepts]:
+    """Load `ExtractedConcepts` objects from the saved JSON artifact for a video."""
+
+    json_path = concepts_dir / f"concepts_{video_id}.json"
+    if not json_path.exists():
+        raise FileNotFoundError(f"Concepts file not found: {json_path}")
+
+    with open(json_path, "r", encoding="utf-8") as fp:
+        data = json.load(fp)
+
+    groups_data = data.get("groups", [])
+    extracted: list[ExtractedConcepts] = []
+
+    for idx, group in enumerate(groups_data):
+        group_id = group.get("group_id") or group.get("groupId") or idx
+        group_text = group.get("group_text") or group.get("text", "")
+        concepts_payload = group.get("concepts", [])
+
+        concepts: list[Concept] = []
+        for concept_data in concepts_payload:
+            try:
+                concept = Concept(
+                    name=concept_data["name"],
+                    definition=concept_data.get("definition", ""),
+                    type=concept_data.get("type", "Concept"),
+                    importance=float(concept_data.get("importance", 0.5)),
+                    confidence=float(concept_data.get("confidence", 0.5)),
+                    video_id=video_id,
+                    group_id=int(group_id),
+                    first_mention_time=float(
+                        concept_data.get("first_mention_time")
+                        or concept_data.get("firstMentionTime")
+                        or 0.0
+                    ),
+                    last_mention_time=float(
+                        concept_data.get("last_mention_time")
+                        or concept_data.get("lastMentionTime")
+                        or 0.0
+                    ),
+                    mention_count=int(
+                        concept_data.get("mention_count")
+                        or concept_data.get("mentionCount")
+                        or 1
+                    ),
+                    aliases=concept_data.get("aliases", []),
+                )
+                concepts.append(concept)
+            except Exception as exc:  # ValueError from dataclass validation
+                print(
+                    f"⚠️  Skipping concept in group {group_id} for video {video_id}: {exc}"
+                )
+
+        extracted.append(
+            ExtractedConcepts(
+                video_id=video_id,
+                group_id=int(group_id),
+                group_text=group_text,
+                concepts=concepts,
+            )
+        )
+
+    print(
+        f"📂 Loaded {len(extracted)} groups from {json_path} (total concepts: {sum(len(g.concepts) for g in extracted)})"
+    )
+    return extracted
+
+
+def load_group_texts(video_id: str, groups_dir: Path) -> dict[int, str]:
+    """Load group text snippets from the grouping artifact if it exists."""
+
+    json_path = groups_dir / f"groups_{video_id}.json"
+    if not json_path.exists():
+        return {}
+
+    try:
+        with open(json_path, "r", encoding="utf-8") as fp:
+            payload = json.load(fp)
+    except json.JSONDecodeError as exc:
+        print(f"⚠️  Failed to parse groups file {json_path}: {exc}")
+        return {}
+
+    groups = payload.get("groups", [])
+    group_texts: dict[int, str] = {}
+    for idx, group in enumerate(groups):
+        group_id = group.get("group_id") or group.get("groupId") or idx
+        text = group.get("group_text") or group.get("text") or ""
+        try:
+            group_texts[int(group_id)] = text
+        except (TypeError, ValueError):
+            continue
+
+    return group_texts
+
+
+def load_concepts_from_graph(
+    graph: Neo4jGraph, video_id: str, group_texts: Optional[dict[int, str]] = None
+) -> list[ExtractedConcepts]:
+    """Reconstruct ExtractedConcepts from Neo4j-stored concepts."""
+
+    concepts = graph.get_extracted_concepts(video_id)
+    grouped: defaultdict[int, list[Concept]] = defaultdict(list)
+    for concept in concepts:
+        grouped[int(concept.group_id)].append(concept)
+
+    extracted: list[ExtractedConcepts] = []
+    for group_id, group_concepts in sorted(grouped.items()):
+        group_text = ""
+        if group_texts:
+            group_text = group_texts.get(group_id, "")
+
+        extracted.append(
+            ExtractedConcepts(
+                video_id=video_id,
+                group_id=group_id,
+                group_text=group_text,
+                concepts=group_concepts,
+            )
+        )
+
+    if not extracted:
+        raise ValueError(f"No concepts found in Neo4j for video {video_id}")
+
+    if group_texts and not all(group_texts.get(item.group_id) for item in extracted):
+        print(
+            "⚠️  Some groups were missing text in the groups JSON; pattern detectors may miss relationships."
+        )
+
+    return extracted
+
+
+def extract_relationships_for_video(
+    extractor: RelationshipExtractor,
+    video_id: str,
+    *,
+    concepts: Optional[list[ExtractedConcepts]] = None,
+) -> ExtractedRelationships:
+    """Run the relationship extractor for a single video."""
+
+    if concepts is not None:
+        return extractor.extract_from_video(concepts, video_id)
+    return extractor.extract_from_graph(video_id)
+
+
+def save_relationships(
+    extractor: RelationshipExtractor,
+    relationships: ExtractedRelationships,
+    output_dir: Path,
+    video_id: str,
+) -> Path:
+    """Persist extracted relationships to disk and return the path."""
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"relationships_{video_id}.json"
+    extractor.save_to_file(relationships, output_path)
+    return output_path
+
+
+def maybe_upload_relationships(
+    uploader: RelationshipUploader,
+    relationships: ExtractedRelationships,
+    video_id: str,
+    overwrite: bool,
+) -> dict[str, int]:
+    """Upload relationships to Neo4j, optionally overwriting existing data."""
+
+    if overwrite:
+        existing = uploader.get_relationship_count(video_id)
+        if existing:
+            print(f"🗑️  Removing {existing} existing relationships for {video_id}...")
+            uploader.delete_relationships_for_video(video_id)
+
+    return uploader.upload_relationships(relationships)
+
+
+def print_video_header(
+    video_id: str, *, source: str, actions: Iterable[str], min_conf: float
+) -> None:
+    """Pretty informational banner for each video processed."""
+
+    print("\n" + "=" * 70)
+    print(f"🔗 Relationship Extraction: {video_id}")
+    print("=" * 70)
+    print(f"Source: {source}")
+    print(f"Min confidence: {min_conf:.2f}")
+    if actions:
+        print(f"Actions: {', '.join(actions)}")
+    print("=" * 70)
+
+
+def print_summary(outcomes: list[ExtractionOutcome]) -> None:
+    """Summarize work across all processed videos."""
+
+    if not outcomes:
         return
 
-    print(f"\n📊 Analyzing {len(concepts)} concepts...")
+    print("\n" + "=" * 70)
+    print("📊 RELATIONSHIP EXTRACTION SUMMARY")
+    print("=" * 70)
 
-    # 1. Co-occurrence Analysis (concepts in same group)
-    print("\n🔗 Co-occurrence Analysis (Same Group)")
-    print("-" * 70)
+    total_relationships = 0
+    for outcome in outcomes:
+        rel_count = len(outcome.relationships)
+        total_relationships += rel_count
 
-    # Group concepts by group_id
-    groups = defaultdict(list)
-    for concept in concepts:
-        groups[concept["groupId"]].append(concept)
+        print(f"\n🎬 Video: {outcome.video_id}")
+        print(f"   Relationships extracted: {rel_count}")
+        print(f"   Avg confidence: {outcome.relationships.avg_confidence:.2f}")
+        if outcome.saved_path:
+            print(f"   Saved JSON: {outcome.saved_path}")
+        if outcome.upload_stats:
+            uploaded = outcome.upload_stats.get("uploaded", 0)
+            skipped = outcome.upload_stats.get("skipped", 0)
+            failed = outcome.upload_stats.get("failed", 0)
+            print(
+                f"   Upload → uploaded: {uploaded}, skipped: {skipped}, failed: {failed}"
+            )
 
-    cooccurrences = []
-    for group_id, group_concepts in groups.items():
-        if len(group_concepts) >= 2:
-            # All pairs in the group
-            for i, c1 in enumerate(group_concepts):
-                for c2 in group_concepts[i + 1 :]:
-                    cooccurrences.append(
-                        {
-                            "concept1": c1["name"],
-                            "concept2": c2["name"],
-                            "group_id": group_id,
-                            "relationship": "co-occurs-in-group",
-                            "strength": min(c1["importance"], c2["importance"]),
-                        }
+        type_distribution = outcome.relationships.type_distribution
+        if type_distribution:
+            print("   Type distribution:")
+            for rel_type, count in sorted(
+                type_distribution.items(), key=lambda x: x[1], reverse=True
+            ):
+                print(f"      {rel_type:20s}: {count}")
+
+    print(f"\n✅ Total relationships extracted: {total_relationships}")
+    print("=" * 70 + "\n")
+
+
+def main() -> None:
+    load_dotenv()
+    args = parse_args()
+    ensure_actions(args)
+
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if not openai_api_key:
+        print("❌ OPENAI_API_KEY not found in environment")
+        sys.exit(1)
+
+    openai_client = OpenAI(api_key=openai_api_key)
+
+    graph: Optional[Neo4jGraph] = None
+    relationship_uploader: Optional[RelationshipUploader] = None
+
+    try:
+        if not args.from_json or args.upload:
+            graph = connect_neo4j()
+            if args.upload:
+                relationship_uploader = RelationshipUploader(graph)
+
+        extractor = RelationshipExtractor(
+            openai_client=openai_client,
+            graph=graph,
+            min_confidence=args.min_confidence,
+        )
+
+        outcomes: list[ExtractionOutcome] = []
+
+        for video_id in args.video_ids:
+            actions = []
+            if args.save:
+                actions.append("save to JSON")
+            if args.upload:
+                actions.append("upload to Neo4j")
+
+            source = "concept JSON" if args.from_json else "Neo4j + group JSON"
+            print_video_header(
+                video_id,
+                source=source,
+                actions=actions,
+                min_conf=args.min_confidence,
+            )
+
+            try:
+                concept_payload = None
+                if args.from_json:
+                    concept_payload = load_concepts_from_json(
+                        video_id, args.concepts_dir
+                    )
+                else:
+                    if not graph:
+                        raise RuntimeError("Neo4j graph client not initialized")
+                    group_texts = load_group_texts(video_id, args.groups_dir)
+                    if group_texts:
+                        print(
+                            f"📝 Loaded group context for {len(group_texts)} groups from {args.groups_dir}/groups_{video_id}.json"
+                        )
+                    else:
+                        print(
+                            "⚠️  No group text found on disk; falling back to Neo4j-only data. Relationships may be sparse."
+                        )
+                    concept_payload = load_concepts_from_graph(
+                        graph, video_id, group_texts
                     )
 
-    if cooccurrences:
-        print(f"\nFound {len(cooccurrences)} co-occurrence relationships")
-
-        # Show top 10 strongest co-occurrences
-        cooccurrences.sort(key=lambda x: x["strength"], reverse=True)
-        print("\nTop 10 Co-occurrences:")
-        for i, rel in enumerate(cooccurrences[:10], 1):
-            print(f"\n{i:2d}. {rel['concept1']} ↔ {rel['concept2']}")
-            print(f"    Group: {rel['group_id']} | Strength: {rel['strength']:.2f}")
-    else:
-        print(
-            "\nNo co-occurrence relationships found (all groups have single concepts)"
-        )
-
-    # 2. Temporal Proximity (concepts in adjacent groups)
-    print("\n⏱️  Temporal Proximity Analysis")
-    print("-" * 70)
-
-    temporal_rels = []
-    sorted_groups = sorted(groups.keys())
-
-    for i in range(len(sorted_groups) - 1):
-        curr_group = sorted_groups[i]
-        next_group = sorted_groups[i + 1]
-
-        curr_concepts = groups[curr_group]
-        next_concepts = groups[next_group]
-
-        # Concepts in adjacent groups likely relate
-        for c1 in curr_concepts:
-            for c2 in next_concepts:
-                temporal_rels.append(
-                    {
-                        "concept1": c1["name"],
-                        "concept2": c2["name"],
-                        "groups": f"{curr_group} → {next_group}",
-                        "relationship": "temporally-adjacent",
-                        "strength": (c1["importance"] + c2["importance"]) / 2,
-                    }
+                relationships = extract_relationships_for_video(
+                    extractor,
+                    video_id,
+                    concepts=concept_payload,
                 )
 
-    if temporal_rels:
-        print(f"\nFound {len(temporal_rels)} temporal proximity relationships")
+                is_valid, issues = relationships.validate()
+                if not is_valid:
+                    print("\n⚠️  Validation issues detected:")
+                    for issue in issues:
+                        print(f"   - {issue}")
 
-        temporal_rels.sort(key=lambda x: x["strength"], reverse=True)
-        print("\nTop 10 Temporal Relationships:")
-        for i, rel in enumerate(temporal_rels[:10], 1):
-            print(f"\n{i:2d}. {rel['concept1']} → {rel['concept2']}")
-            print(f"    Groups: {rel['groups']} | Strength: {rel['strength']:.2f}")
-    else:
-        print("\nNo temporal relationships found")
+                saved_path = None
+                upload_stats = None
 
-    # 3. Type-based Relationships
-    print("\n🏷️  Type-based Relationship Patterns")
-    print("-" * 70)
+                if args.save:
+                    saved_path = save_relationships(
+                        extractor, relationships, args.output_dir, video_id
+                    )
 
-    # Common patterns: Problem → Solution, Method → Technology, etc.
-    type_pairs = defaultdict(int)
+                if args.upload:
+                    if not relationship_uploader:
+                        raise RuntimeError(
+                            "Uploader not initialized; check Neo4j connection."
+                        )
+                    upload_stats = maybe_upload_relationships(
+                        relationship_uploader,
+                        relationships,
+                        video_id,
+                        args.overwrite,
+                    )
 
-    for concept in concepts:
-        ctype = concept["type"]
-        # Count how concepts of different types co-occur
-        same_group = groups[concept["groupId"]]
-        for other in same_group:
-            if other["name"] != concept["name"]:
-                pair = tuple(sorted([ctype, other["type"]]))
-                type_pairs[pair] += 1
-
-    if type_pairs:
-        print("\nMost Common Type Pairings:")
-        for i, (pair, count) in enumerate(
-            sorted(type_pairs.items(), key=lambda x: x[1], reverse=True)[:10], 1
-        ):
-            print(f"{i:2d}. {pair[0]} ↔ {pair[1]}: {count} occurrences")
-    else:
-        print("\nNo type pairings found")
-
-    # 4. Similarity-based (using semantic search)
-    print("\n🔍 Semantic Similarity Analysis")
-    print("-" * 70)
-
-    print("\nFinding semantically similar concepts...")
-
-    similarity_rels = []
-
-    # For each concept, find similar ones
-    for concept in concepts[:10]:  # Limit to first 10 to avoid too many API calls
-        similar = uploader.search_concepts(concept["name"], limit=5, min_confidence=0.7)
-
-        for sim_concept in similar:
-            # Skip self-matches
-            if sim_concept["name"] == concept["name"]:
-                continue
-
-            # Only include if from same video
-            if sim_concept.get("videoId") == video_id:
-                similarity_rels.append(
-                    {
-                        "concept1": concept["name"],
-                        "concept2": sim_concept["name"],
-                        "similarity": sim_concept.get("similarity", 0.0),
-                        "relationship": "semantically-similar",
-                    }
+                outcomes.append(
+                    ExtractionOutcome(
+                        video_id=video_id,
+                        relationships=relationships,
+                        saved_path=saved_path,
+                        upload_stats=upload_stats,
+                    )
                 )
 
-    if similarity_rels:
-        # Remove duplicates (A→B and B→A)
-        seen = set()
-        unique_rels = []
-        for rel in similarity_rels:
-            pair = tuple(sorted([rel["concept1"], rel["concept2"]]))
-            if pair not in seen:
-                seen.add(pair)
-                unique_rels.append(rel)
+            except FileNotFoundError as exc:
+                print(f"❌ {exc}")
+            except Exception as exc:
+                print(f"❌ Failed to process {video_id}: {exc}")
+                import traceback
 
-        unique_rels.sort(key=lambda x: x["similarity"], reverse=True)
+                traceback.print_exc()
 
-        print(f"\nFound {len(unique_rels)} similarity relationships")
-        print("\nTop 10 Semantically Similar Pairs:")
-        for i, rel in enumerate(unique_rels[:10], 1):
-            print(f"\n{i:2d}. {rel['concept1']} ≈ {rel['concept2']}")
-            print(f"    Similarity: {rel['similarity']:.3f}")
-    else:
-        print("\nNo semantic similarity relationships found")
-
-    # Summary
-    print("\n" + "=" * 70)
-    print("📊 Relationship Summary")
-    print("=" * 70)
-    print(f"\nTotal relationships found:")
-    print(f"  • Co-occurrence (same group): {len(cooccurrences)}")
-    print(f"  • Temporal proximity (adjacent): {len(temporal_rels)}")
-    print(f"  • Semantic similarity: {len(similarity_rels)}")
-    print(
-        f"  • Total: {len(cooccurrences) + len(temporal_rels) + len(similarity_rels)}"
-    )
-
-    print("\n💡 Next Steps:")
-    print("  • Phase 2: Implement LLM-based relationship extraction")
-    print("  • Phase 3: Store relationships in graph database")
-    print("  • Phase 4: Enable multi-hop queries and reasoning")
-
-
-def main():
-    """Main entry point for relationship extraction."""
-    args = sys.argv[1:]
-
-    if not args or "--help" in args or "-h" in args:
-        print(__doc__)
-        return
-
-    # Parse arguments
-    process_all = "--all" in args
-    if process_all:
-        args = [a for a in args if a != "--all"]
-
-    # Determine video IDs
-    if process_all:
-        # This would require querying Weaviate for all video IDs
-        print("⚠️  --all flag not yet implemented")
-        print("   Please specify video IDs explicitly")
-        sys.exit(1)
-
-    if not args:
-        print("❌ No video IDs specified")
-        print(
-            "   Usage: python scripts/extract_relationships.py VIDEO_ID [VIDEO_ID2 ...]"
-        )
-        sys.exit(1)
-
-    video_ids = args
-
-    # Initialize uploader
-    try:
-        uploader = ConceptUploader()
-    except Exception as e:
-        print(f"❌ Failed to connect to Weaviate: {e}")
-        sys.exit(1)
-
-    try:
-        for video_id in video_ids:
-            analyze_concept_relationships(uploader, video_id)
-
-            if len(video_ids) > 1:
-                print("\n" + "=" * 70 + "\n")
+        print_summary(outcomes)
 
     finally:
-        uploader.close()
+        if graph:
+            graph.close()
+            print("\n✓ Neo4j connection closed")
 
 
 if __name__ == "__main__":

@@ -1,69 +1,65 @@
-"""Upload extracted concepts to Weaviate."""
+"""Upload extracted concepts to Neo4j."""
 
 from __future__ import annotations
 
 import os
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 from uuid import UUID
 
 from dotenv import load_dotenv
-import weaviate
-from weaviate.classes.init import Auth
 
 from .concept_models import Concept, ConceptMention, ExtractedConcepts
+from .neo4j_graph import Neo4jGraph
 
 # Load environment variables
 load_dotenv()
 
 
 class ConceptUploader:
-    """Upload concepts and concept mentions to Weaviate."""
+    """Upload concepts and concept mentions to Neo4j."""
 
     def __init__(
         self,
-        cluster_url: Optional[str] = None,
-        api_key: Optional[str] = None,
-        openai_api_key: Optional[str] = None,
-    ):
-        """Initialize Weaviate client for concept upload.
+        uri: Optional[str] = None,
+        user: Optional[str] = None,
+        password: Optional[str] = None,
+        database: Optional[str] = None,
+    ) -> None:
+        """Initialize Neo4j client for concept upload.
 
         Args:
-            cluster_url: Weaviate cluster URL (defaults to WEAVIATE_URL env var)
-            api_key: Weaviate API key (defaults to WEAVIATE_API_KEY env var)
-            openai_api_key: OpenAI API key for vectorization (defaults to OPENAI_API_KEY env var)
+            uri: Neo4j bolt URI (defaults to NEO4J_URI env var)
+            user: Neo4j username (defaults to NEO4J_USER env var)
+            password: Neo4j password (defaults to NEO4J_PASSWORD env var)
+            database: Optional Neo4j database name (defaults to NEO4J_DATABASE env var)
         """
-        self.cluster_url = cluster_url or os.getenv("WEAVIATE_URL")
-        self.api_key = api_key or os.getenv("WEAVIATE_API_KEY")
-        self.openai_api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
 
-        if not all([self.cluster_url, self.api_key, self.openai_api_key]):
+        self.uri = uri or os.getenv("NEO4J_URI")
+        self.user = user or os.getenv("NEO4J_USER")
+        self.password = password or os.getenv("NEO4J_PASSWORD")
+        self.database = database or os.getenv("NEO4J_DATABASE")
+
+        if not all([self.uri, self.user, self.password]):
             raise ValueError(
-                "Missing required credentials. Set WEAVIATE_URL, WEAVIATE_API_KEY, "
-                "and OPENAI_API_KEY environment variables"
+                "Missing required credentials. Set NEO4J_URI, NEO4J_USER, "
+                "and NEO4J_PASSWORD environment variables"
             )
 
-        # Connect to Weaviate
-        self.client = weaviate.connect_to_weaviate_cloud(
-            cluster_url=self.cluster_url,
-            auth_credentials=Auth.api_key(self.api_key),
-            headers={"X-OpenAI-Api-Key": self.openai_api_key},
+        self.graph = Neo4jGraph(
+            uri=self.uri,
+            user=self.user,
+            password=self.password,
+            database=self.database,
         )
 
-        if not self.client.is_ready():
-            raise RuntimeError("Weaviate cluster is not ready")
-
-        print(f"✓ Connected to Weaviate: {self.cluster_url}")
-
-        # Get collections
-        self.concept_collection = self.client.collections.get("Concept")
-        self.mention_collection = self.client.collections.get("ConceptMention")
+        print(f"✓ Connected to Neo4j: {self.uri}")
 
     def upload_concepts(
         self,
         concepts: Iterable[Concept],
         batch_size: int = 100,
     ) -> tuple[int, int]:
-        """Upload concepts to Weaviate.
+        """Upload concepts to Neo4j.
 
         Args:
             concepts: Iterable of Concept objects
@@ -72,30 +68,17 @@ class ConceptUploader:
         Returns:
             Tuple of (successful_uploads, failed_uploads)
         """
-        success_count = 0
-        failed_count = 0
-
-        with self.concept_collection.batch.dynamic() as batch:
-            for concept in concepts:
-                try:
-                    properties = concept.as_weaviate_properties()
-                    batch.add_object(
-                        uuid=concept.id,
-                        properties=properties,
-                    )
-                    success_count += 1
-                except Exception as e:
-                    print(f"⚠️  Failed to upload concept '{concept.name}': {e}")
-                    failed_count += 1
-
-        return success_count, failed_count
+        success, failed = self.graph.upsert_concepts(concepts)
+        if failed:
+            print(f"⚠️  Failed to upload {failed} concepts")
+        return success, failed
 
     def upload_mentions(
         self,
         mentions: Iterable[ConceptMention],
         batch_size: int = 100,
     ) -> tuple[int, int]:
-        """Upload concept mentions to Weaviate.
+        """Upload concept mentions to Neo4j.
 
         Args:
             mentions: Iterable of ConceptMention objects
@@ -104,28 +87,10 @@ class ConceptUploader:
         Returns:
             Tuple of (successful_uploads, failed_uploads)
         """
-        success_count = 0
-        failed_count = 0
-
-        with self.mention_collection.batch.dynamic() as batch:
-            for mention in mentions:
-                try:
-                    properties = mention.as_weaviate_properties()
-
-                    # Add with cross-reference to Concept
-                    batch.add_object(
-                        uuid=mention.id,
-                        properties=properties,
-                        references={
-                            "concept": mention.concept_id,  # Cross-ref to Concept
-                        },
-                    )
-                    success_count += 1
-                except Exception as e:
-                    print(f"⚠️  Failed to upload mention: {e}")
-                    failed_count += 1
-
-        return success_count, failed_count
+        success, failed = self.graph.upsert_mentions(mentions)
+        if failed:
+            print(f"⚠️  Failed to upload {failed} mentions")
+        return success, failed
 
     def upload_extracted_concepts(
         self,
@@ -161,7 +126,7 @@ class ConceptUploader:
         return stats
 
     def concept_exists(self, concept_id: UUID) -> bool:
-        """Check if a concept already exists in Weaviate.
+        """Check if a concept already exists in Neo4j.
 
         Args:
             concept_id: UUID of the concept
@@ -169,11 +134,7 @@ class ConceptUploader:
         Returns:
             True if concept exists, False otherwise
         """
-        try:
-            result = self.concept_collection.query.fetch_object_by_id(concept_id)
-            return result is not None
-        except Exception:
-            return False
+        return self.graph.concept_exists(str(concept_id))
 
     def get_concepts_for_video(self, video_id: str) -> list[dict]:
         """Retrieve all concepts for a specific video.
@@ -184,17 +145,7 @@ class ConceptUploader:
         Returns:
             List of concept data dictionaries
         """
-        try:
-            result = self.concept_collection.query.fetch_objects(
-                filters=weaviate.classes.query.Filter.by_property("videoId").equal(
-                    video_id
-                ),
-                limit=1000,
-            )
-            return [obj.properties for obj in result.objects]
-        except Exception as e:
-            print(f"⚠️  Failed to fetch concepts for video {video_id}: {e}")
-            return []
+        return self.graph.get_concepts_for_video(video_id)
 
     def get_concepts_for_group(self, video_id: str, group_id: int) -> list[dict]:
         """Retrieve all concepts for a specific group.
@@ -206,20 +157,7 @@ class ConceptUploader:
         Returns:
             List of concept data dictionaries
         """
-        try:
-            result = self.concept_collection.query.fetch_objects(
-                filters=(
-                    weaviate.classes.query.Filter.by_property("videoId").equal(video_id)
-                    & weaviate.classes.query.Filter.by_property("groupId").equal(
-                        group_id
-                    )
-                ),
-                limit=100,
-            )
-            return [obj.properties for obj in result.objects]
-        except Exception as e:
-            print(f"⚠️  Failed to fetch concepts for group {group_id}: {e}")
-            return []
+        return self.graph.get_concepts_for_group(video_id, group_id)
 
     def search_concepts(
         self,
@@ -227,7 +165,7 @@ class ConceptUploader:
         limit: int = 10,
         min_confidence: float = 0.0,
     ) -> list[dict]:
-        """Semantic search for concepts.
+        """Search for concepts by name or definition substring.
 
         Args:
             query: Search query
@@ -237,32 +175,9 @@ class ConceptUploader:
         Returns:
             List of concept data dictionaries with similarity scores
         """
-        try:
-            result = self.concept_collection.query.near_text(
-                query=query,
-                limit=limit,
-                return_metadata=["distance"],
-                filters=(
-                    (
-                        weaviate.classes.query.Filter.by_property(
-                            "confidence"
-                        ).greater_or_equal(min_confidence)
-                    )
-                    if min_confidence > 0
-                    else None
-                ),
-            )
-
-            return [
-                {
-                    **obj.properties,
-                    "similarity": 1 - obj.metadata.distance,
-                }
-                for obj in result.objects
-            ]
-        except Exception as e:
-            print(f"⚠️  Search failed: {e}")
-            return []
+        return self.graph.search_concepts(
+            query, limit=limit, min_confidence=min_confidence
+        )
 
     def delete_concepts_for_video(self, video_id: str) -> int:
         """Delete all concepts for a video (useful for re-extraction).
@@ -273,60 +188,33 @@ class ConceptUploader:
         Returns:
             Number of concepts deleted
         """
-        try:
-            result = self.concept_collection.data.delete_many(
-                where=weaviate.classes.query.Filter.by_property("videoId").equal(
-                    video_id
-                )
-            )
-            count = result.successful if hasattr(result, "successful") else 0
-            print(f"✓ Deleted {count} concepts for video {video_id}")
-            return count
-        except Exception as e:
-            print(f"⚠️  Failed to delete concepts: {e}")
-            return 0
+        deleted = self.graph.delete_concepts_for_video(video_id)
+        print(f"✓ Deleted {deleted} concepts for video {video_id}")
+        return deleted
 
-    def get_statistics(self) -> dict[str, any]:
+    def get_statistics(self) -> dict[str, Any]:
         """Get statistics about stored concepts.
 
         Returns:
             Dictionary with various statistics
         """
-        try:
-            # Get total counts
-            concept_result = self.concept_collection.aggregate.over_all(
-                total_count=True,
-            )
-
-            total_concepts = concept_result.total_count if concept_result else 0
-
-            # Note: More detailed stats would require aggregation queries
-            # This is a basic implementation
-
-            return {
-                "total_concepts": total_concepts,
-                "collections_available": ["Concept", "ConceptMention"],
-            }
-        except Exception as e:
-            print(f"⚠️  Failed to get statistics: {e}")
-            return {}
+        return self.graph.get_statistics()
 
     def close(self):
-        """Close Weaviate connection."""
-        self.client.close()
-        print("✓ Closed Weaviate connection")
+        """Close Neo4j connection."""
+        self.graph.close()
+        print("✓ Closed Neo4j connection")
 
 
 def main():
     """Example usage of ConceptUploader."""
-    from datetime import datetime
 
     # Initialize uploader
     uploader = ConceptUploader()
 
     try:
         # Get statistics
-        print("\n📊 Weaviate Statistics:")
+        print("\n📊 Neo4j Statistics:")
         stats = uploader.get_statistics()
         for key, value in stats.items():
             print(f"  {key}: {value}")
@@ -339,7 +227,9 @@ def main():
             print(f"\nFound {len(results)} concepts:")
             for concept in results:
                 print(f"\n  • {concept['name']} ({concept['type']})")
-                print(f"    Similarity: {concept['similarity']:.3f}")
+                confidence = concept.get("confidence")
+                if confidence is not None:
+                    print(f"    Confidence: {confidence:.2f}")
                 print(f"    Importance: {concept['importance']:.2f}")
                 print(f"    Definition: {concept['definition'][:80]}...")
         else:

@@ -12,6 +12,7 @@ YouTubeGraph is a Python-based pipeline that processes YouTube video transcripts
 - 📝 **Intelligent Segmentation** - Groups transcript segments by semantic similarity
 - ⏱️ **Temporal Awareness** - Maintains narrative flow with time-decay penalties
 - 🔍 **Vector Search** - Weaviate integration for k-NN similarity queries
+- 🕸️ **Knowledge Graph Storage** - Neo4j backend for concepts and relationships
 - 🧠 **LLM Concept Extraction** - Extract key concepts from groups using GPT ✨ NEW
 - 📊 **Rich Analytics** - Visualizations and diagnostics for group quality
 - 🚀 **Production Ready** - Clean architecture, type hints, comprehensive docs
@@ -75,11 +76,16 @@ pip install -r requirements.txt
 Create a `.env` file in the project root:
 
 ```bash
-# Weaviate Cloud Configuration
+# Weaviate Cloud Configuration (segment storage)
 WEAVIATE_URL=https://your-instance.weaviate.network
 WEAVIATE_API_KEY=your-weaviate-api-key
 
-# OpenAI API (for embeddings via Weaviate)
+# Neo4j Graph Database (concept + relationship storage)
+NEO4J_URI=bolt+s://your-neo4j-instance.databases.neo4j.io
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=your-neo4j-password
+
+# OpenAI API (LLM + embeddings)
 OPENAI_API_KEY=your-openai-api-key
 ```
 
@@ -366,9 +372,10 @@ Good grouping results show:
 - [x] Temporal coherence preservation
 - [x] Automated end-to-end pipeline
 - [x] Quality analytics & visualization
+- [x] LLM-based concept extraction from groups
+- [x] Neo4j-backed concept + relationship storage
 
 ### 🚧 In Progress
-- [ ] LLM-based concept extraction from groups
 - [ ] Cue-phrase detection and cross-references
 
 ## 🔮 Future Enhancements
@@ -391,6 +398,7 @@ MIT License - See LICENSE file for details
 ## 🙏 Acknowledgments
 
 - **Weaviate** - Vector database
+- **Neo4j** - Graph database
 - **OpenAI** - Text embeddings (text-embedding-ada-002)
 - **deepmultilingualpunctuation** - Punctuation restoration
 - **youtube-transcript-api** - Transcript fetching

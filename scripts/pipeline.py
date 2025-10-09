@@ -1,28 +1,61 @@
-"""YouTube to Weaviate Pipeline - End-to-end transcript processing and upload."""
+"""YouTubeGraph Pipeline - Full video processing into Weaviate + Neo4j."""
 
 from __future__ import annotations
 
 import os
-from pathlib import Path
-from typing import Optional
-
 import sys
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Iterable, Optional
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from dotenv import load_dotenv
+from openai import OpenAI
+
+from src.core.concept_extractor import ConceptExtractor, ExtractionError
+from src.core.concept_models import Concept, ExtractedConcepts
+from src.core.concept_uploader import ConceptUploader
+from src.core.neo4j_graph import Neo4jGraph
 from src.core.punctuation_worker import PunctuationWorker, TranscriptJob
+from src.core.relationship_extractor import RelationshipExtractor
+from src.core.relationship_models import ExtractedRelationships
+from src.core.relationship_uploader import RelationshipUploader
+from src.core.segment_grouper import SegmentGrouper, SegmentGroup
 from src.core.weaviate_uploader import WeaviateUploader
-from src.core.segment_grouper import SegmentGrouper
 
 # Load environment variables
 load_dotenv()
 
 
-class YouTubeToWeaviatePipeline:
-    """Complete pipeline: YouTube URL → Transcript → Punctuation → Chunking → Weaviate → Grouping."""
+@dataclass
+class ConceptExtractionStats:
+    video_id: str
+    groups_processed: int = 0
+    groups_failed: int = 0
+    concepts_extracted: int = 0
+    concepts_uploaded: int = 0
+    concepts_failed: int = 0
+    avg_importance: float = 0.0
+    avg_confidence: float = 0.0
+    extraction_time: float = 0.0
+
+
+@dataclass
+class RelationshipExtractionStats:
+    video_id: str
+    relationships_detected: int = 0
+    uploaded: int = 0
+    skipped: int = 0
+    failed: int = 0
+    avg_confidence: float = 0.0
+    type_distribution: dict[str, int] = field(default_factory=dict)
+
+
+class YouTubeGraphPipeline:
+    """End-to-end pipeline: YouTube URL → Transcript → Weaviate → Groups → Neo4j graph."""
 
     def __init__(
         self,
@@ -33,6 +66,10 @@ class YouTubeToWeaviatePipeline:
         collection_name: str = "Segment",
         enable_grouping: bool = True,
         grouping_params: Optional[dict] = None,
+        enable_concepts: bool = True,
+        enable_relationships: bool = True,
+        min_relationship_confidence: float = 0.6,
+        concept_delay_seconds: float = 0.5,
     ):
         """Initialize the pipeline.
 
@@ -63,9 +100,12 @@ class YouTubeToWeaviatePipeline:
         )
         print("✓ Punctuation model loaded!")
 
-        # Store collection name for uploader
+        # Store collection name for uploader and feature flags
         self.collection_name = collection_name
         self.enable_grouping = enable_grouping
+        self.enable_concepts = enable_concepts
+        self.enable_relationships = enable_relationships
+        self.concept_delay_seconds = concept_delay_seconds
 
         self.uploader = WeaviateUploader(
             cluster_url=self.weaviate_url,
@@ -98,13 +138,91 @@ class YouTubeToWeaviatePipeline:
                 **final_params,
             )
 
+        # Neo4j + concept extraction components
+        self.concept_extractor: Optional[ConceptExtractor] = None
+        self.concept_uploader: Optional[ConceptUploader] = None
+        self.neo4j_graph: Optional[Neo4jGraph] = None
+        self.relationship_extractor: Optional[RelationshipExtractor] = None
+        self.relationship_uploader: Optional[RelationshipUploader] = None
+        self.relationship_client: Optional[OpenAI] = None
+
+        if self.enable_concepts or self.enable_relationships:
+            self._initialize_graph_components(
+                enable_concepts=self.enable_concepts,
+                enable_relationships=self.enable_relationships,
+                min_relationship_confidence=min_relationship_confidence,
+            )
+
+        # Output directories
+        self.groups_output_dir = Path("output/groups")
+        self.relationships_output_dir = Path("output/relationships")
+
+    # ------------------------------------------------------------------
+    # Initialization helpers
+    # ------------------------------------------------------------------
+    def _initialize_graph_components(
+        self,
+        *,
+        enable_concepts: bool,
+        enable_relationships: bool,
+        min_relationship_confidence: float,
+    ) -> None:
+        """Set up Neo4j clients, concept extractor, and relationship tools."""
+
+        neo4j_uri = os.getenv("NEO4J_URI")
+        neo4j_user = os.getenv("NEO4J_USER")
+        neo4j_password = os.getenv("NEO4J_PASSWORD")
+        neo4j_database = os.getenv("NEO4J_DATABASE")
+
+        if not all([neo4j_uri, neo4j_user, neo4j_password]):
+            raise ValueError(
+                "Neo4j credentials missing. Set NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD in the environment."
+            )
+
+        if enable_concepts:
+            self.concept_extractor = ConceptExtractor()
+            self.concept_uploader = ConceptUploader(
+                uri=neo4j_uri,
+                user=neo4j_user,
+                password=neo4j_password,
+                database=neo4j_database,
+            )
+            self.neo4j_graph = self.concept_uploader.graph
+        else:
+            self.neo4j_graph = Neo4jGraph(
+                uri=neo4j_uri,
+                user=neo4j_user,
+                password=neo4j_password,
+                database=neo4j_database,
+            )
+
+        if enable_relationships:
+            if not self.openai_api_key:
+                raise ValueError(
+                    "OPENAI_API_KEY (or compatible LLM binding) required for relationship extraction"
+                )
+            self.relationship_client = OpenAI(api_key=self.openai_api_key)
+            self.relationship_extractor = RelationshipExtractor(
+                openai_client=self.relationship_client,
+                graph=self.neo4j_graph,
+                min_confidence=min_relationship_confidence,
+            )
+            self.relationship_uploader = RelationshipUploader(self.neo4j_graph)
+
+    # ------------------------------------------------------------------
+    # Core processing steps
+    # ------------------------------------------------------------------
+
     def process_video(
         self,
         youtube_url: str,
         languages: Optional[list[str]] = None,
         output_groups: bool = True,
+        skip_concept_extraction_if_exists: bool = False,
+        overwrite_relationships: bool = False,
+        save_relationships: bool = True,
     ) -> dict:
-        """Process a YouTube video end-to-end and upload to Weaviate.
+        """Process a YouTube video end-to-end and populate Neo4j.
 
         Args:
             youtube_url: YouTube video URL
@@ -152,26 +270,51 @@ class YouTubeToWeaviatePipeline:
         segment_count = self.uploader.upload_segments(transcript_result.segments)
         print(f"✓ Uploaded {segment_count} segments to Weaviate")
 
+        video_id = transcript_result.video_id
+
         result = {
             "segment_count": segment_count,
-            "video_id": transcript_result.video_id,
+            "video_id": video_id,
         }
 
         # Step 5: Group segments (if enabled)
         if self.enable_grouping and self.grouper:
             print("\n🔗 Step 5: Grouping segments semantically...")
             try:
-                groups = self.grouper.group_video(transcript_result.video_id)
+                groups = self.grouper.group_video(video_id)
                 result["groups"] = groups
                 result["group_count"] = len(groups)
 
                 # Save groups to file if requested
                 if output_groups and groups:
-                    output_path = Path(
-                        f"output/groups/groups_{transcript_result.video_id}.json"
-                    )
+                    output_path = Path(f"output/groups/groups_{video_id}.json")
                     self.grouper.export_groups_to_json(groups, output_path)
                     print(f"✓ Saved {len(groups)} groups to {output_path}")
+
+                # Step 6: Concept extraction + upload
+                if self.enable_concepts:
+                    concept_stats, extracted_concepts = (
+                        self._extract_and_upload_concepts(
+                            video_id,
+                            groups,
+                            skip_if_exists=skip_concept_extraction_if_exists,
+                        )
+                    )
+                    result["concept_stats"] = concept_stats.__dict__
+                else:
+                    extracted_concepts = self._load_concepts_for_relationships(
+                        video_id, groups
+                    )
+
+                # Step 7: Relationship extraction + upload
+                if self.enable_relationships and extracted_concepts:
+                    relationship_stats = self._extract_and_upload_relationships(
+                        video_id,
+                        extracted_concepts,
+                        overwrite=overwrite_relationships,
+                        save_output=save_relationships,
+                    )
+                    result["relationship_stats"] = relationship_stats.__dict__
 
             except Exception as e:
                 print(f"⚠️  Grouping failed: {e}")
@@ -184,9 +327,226 @@ class YouTubeToWeaviatePipeline:
         print(f"Segments uploaded: {segment_count}")
         if "group_count" in result:
             print(f"Groups created: {result['group_count']}")
+        if result.get("concept_stats"):
+            stats = result["concept_stats"]
+            print(
+                f"Concepts uploaded: {stats['concepts_uploaded']} (groups processed: {stats['groups_processed']})"
+            )
+        if result.get("relationship_stats"):
+            rel_stats = result["relationship_stats"]
+            print(
+                f"Relationships uploaded: {rel_stats['uploaded']} (detected: {rel_stats['relationships_detected']})"
+            )
         print(f"{'='*60}\n")
 
         return result
+
+    # ------------------------------------------------------------------
+    # Concept extraction helpers
+    # ------------------------------------------------------------------
+    def _extract_and_upload_concepts(
+        self,
+        video_id: str,
+        groups: Iterable[SegmentGroup],
+        *,
+        skip_if_exists: bool,
+    ) -> tuple[ConceptExtractionStats, list[ExtractedConcepts]]:
+        if not self.concept_extractor or not self.concept_uploader:
+            raise RuntimeError("Concept components not initialized")
+
+        stats = ConceptExtractionStats(video_id=video_id)
+        extracted_payload: list[ExtractedConcepts] = []
+        importance_scores: list[float] = []
+        confidence_scores: list[float] = []
+
+        if skip_if_exists:
+            existing = self.concept_uploader.get_concepts_for_video(video_id)
+            if existing:
+                print(
+                    f"⚠️  {len(existing)} concepts already exist for {video_id}; skipping re-extraction"
+                )
+                reconstructed = self._convert_existing_concepts(
+                    video_id, existing, groups
+                )
+                stats.groups_processed = len(reconstructed)
+                stats.concepts_extracted = sum(
+                    len(item.concepts) for item in reconstructed
+                )
+                if stats.concepts_extracted:
+                    importance_scores.extend(
+                        concept.importance
+                        for item in reconstructed
+                        for concept in item.concepts
+                    )
+                    confidence_scores.extend(
+                        concept.confidence
+                        for item in reconstructed
+                        for concept in item.concepts
+                    )
+                    stats.avg_importance = sum(importance_scores) / len(
+                        importance_scores
+                    )
+                    stats.avg_confidence = sum(confidence_scores) / len(
+                        confidence_scores
+                    )
+                return stats, reconstructed
+
+        start_time = time.time()
+
+        for group in groups or []:
+            group_id = group.group_id
+            group_text = group.text
+            if not group_text.strip():
+                print(f"  ⚠️  Group {group_id}: No text, skipping concept extraction")
+                stats.groups_failed += 1
+                continue
+
+            print(
+                f"🧠 Extracting concepts for group {group_id} (video {video_id})...",
+                end=" ",
+            )
+            try:
+                extracted = self.concept_extractor.extract_from_group(
+                    video_id=video_id,
+                    group_id=group_id,
+                    group_text=group_text,
+                    start_time=group.start_time,
+                    end_time=group.end_time,
+                )
+
+                is_valid, issues = extracted.validate()
+                if not is_valid:
+                    print("\n    ⚠️  Validation warnings:")
+                    for issue in issues:
+                        print(f"       - {issue}")
+
+                upload_stats = self.concept_uploader.upload_extracted_concepts(
+                    extracted
+                )
+
+                extracted_payload.append(extracted)
+                stats.groups_processed += 1
+                stats.concepts_extracted += len(extracted.concepts)
+                stats.concepts_uploaded += upload_stats["concepts_success"]
+                stats.concepts_failed += upload_stats["concepts_failed"]
+
+                importance_scores.extend(c.importance for c in extracted.concepts)
+                confidence_scores.extend(c.confidence for c in extracted.concepts)
+
+                print(f"✓ {len(extracted.concepts)} concepts")
+
+                time.sleep(self.concept_delay_seconds)
+
+            except ExtractionError as exc:
+                print(f"❌ Failed: {exc}")
+                stats.groups_failed += 1
+            except Exception as exc:
+                print(f"❌ Unexpected error: {exc}")
+                stats.groups_failed += 1
+
+        stats.extraction_time = time.time() - start_time
+        if importance_scores:
+            stats.avg_importance = sum(importance_scores) / len(importance_scores)
+        if confidence_scores:
+            stats.avg_confidence = sum(confidence_scores) / len(confidence_scores)
+        return stats, extracted_payload
+
+    def _convert_existing_concepts(
+        self,
+        video_id: str,
+        records: list[dict],
+        groups: Iterable[SegmentGroup],
+    ) -> list[ExtractedConcepts]:
+        group_map = {g.group_id: g.text for g in groups or []}
+        grouped: dict[int, list[Concept]] = {}
+
+        for record in records:
+            concept = Concept(
+                name=record["name"],
+                definition=record.get("definition", ""),
+                type=record.get("type", "Concept"),
+                importance=float(record.get("importance", 0.5)),
+                confidence=float(record.get("confidence", 0.5)),
+                video_id=video_id,
+                group_id=int(record.get("groupId", 0)),
+                first_mention_time=float(record.get("firstMentionTime", 0.0)),
+                last_mention_time=float(record.get("lastMentionTime", 0.0)),
+                mention_count=int(record.get("mentionCount", 1)),
+                aliases=record.get("aliases", []) or [],
+                extracted_at=record.get("extractedAt"),
+                id=record.get("id"),
+            )
+            grouped.setdefault(concept.group_id, []).append(concept)
+
+        extracted_payload: list[ExtractedConcepts] = []
+        for group_id, concepts in grouped.items():
+            group_text = group_map.get(group_id, "")
+            extracted_payload.append(
+                ExtractedConcepts(
+                    video_id=video_id,
+                    group_id=group_id,
+                    group_text=group_text,
+                    concepts=concepts,
+                )
+            )
+
+        return extracted_payload
+
+    def _load_concepts_for_relationships(
+        self,
+        video_id: str,
+        groups: Iterable[SegmentGroup],
+    ) -> list[ExtractedConcepts]:
+        if not self.concept_uploader:
+            raise RuntimeError("Concept uploader not available")
+        records = self.concept_uploader.get_concepts_for_video(video_id)
+        if not records:
+            print("⚠️  No concepts found in Neo4j; relationships will be skipped")
+            return []
+        return self._convert_existing_concepts(video_id, records, groups)
+
+    # ------------------------------------------------------------------
+    # Relationship extraction helpers
+    # ------------------------------------------------------------------
+    def _extract_and_upload_relationships(
+        self,
+        video_id: str,
+        extracted_concepts: list[ExtractedConcepts],
+        *,
+        overwrite: bool,
+        save_output: bool,
+    ) -> RelationshipExtractionStats:
+        if not self.relationship_extractor or not self.relationship_uploader:
+            raise RuntimeError("Relationship components not initialized")
+
+        print("\n🔗 Step 6: Extracting relationships...")
+        relationships: ExtractedRelationships = (
+            self.relationship_extractor.extract_from_video(extracted_concepts, video_id)
+        )
+
+        stats = RelationshipExtractionStats(
+            video_id=video_id,
+            relationships_detected=len(relationships),
+            avg_confidence=relationships.avg_confidence,
+            type_distribution=relationships.type_distribution,
+        )
+
+        if overwrite:
+            self.relationship_uploader.delete_relationships_for_video(video_id)
+
+        upload_stats = self.relationship_uploader.upload_relationships(relationships)
+        stats.uploaded = upload_stats.get("uploaded", 0)
+        stats.skipped = upload_stats.get("skipped", 0)
+        stats.failed = upload_stats.get("failed", 0)
+
+        if save_output:
+            output_path = (
+                self.relationships_output_dir / f"relationships_{video_id}.json"
+            )
+            self.relationships_output_dir.mkdir(parents=True, exist_ok=True)
+            self.relationship_extractor.save_to_file(relationships, output_path)
+
+        return stats
 
     def process_multiple_videos(self, youtube_urls: list[str]) -> dict[str, dict]:
         """Process multiple YouTube videos.
@@ -244,6 +604,14 @@ class YouTubeToWeaviatePipeline:
         self.uploader.close()
         if self.grouper:
             self.grouper.close()
+        if self.concept_uploader:
+            self.concept_uploader.close()
+        elif self.neo4j_graph:
+            self.neo4j_graph.close()
+
+
+# Backwards compatibility with old class name
+YouTubeToWeaviatePipeline = YouTubeGraphPipeline
 
 
 def main():
@@ -251,7 +619,7 @@ def main():
 
     # Example 1: Full pipeline with grouping (recommended)
     print("🚀 Initializing full pipeline with grouping...\n")
-    pipeline = YouTubeToWeaviatePipeline(
+    pipeline = YouTubeGraphPipeline(
         enable_grouping=True,
         grouping_params={
             "k_neighbors": 8,
@@ -264,7 +632,7 @@ def main():
 
     try:
         # Single video - full processing
-        youtube_url = "https://www.youtube.com/watch?v=CUS6ABgI1As"
+        youtube_url = "https://www.youtube.com/watch?v=3T9hNqr-Aic"
         result = pipeline.process_video(youtube_url)
 
         print(f"\n📊 Results:")

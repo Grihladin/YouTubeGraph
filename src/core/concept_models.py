@@ -85,6 +85,18 @@ class Concept:
         if isinstance(self.type, str):
             self.type = ConceptType.from_string(self.type)
 
+        # Normalize aliases collection
+        if self.aliases is None:
+            self.aliases = []
+
+        # Ensure extracted_at is datetime
+        if isinstance(self.extracted_at, str):
+            value = self.extracted_at.rstrip("Z")
+            try:
+                self.extracted_at = datetime.fromisoformat(value)
+            except ValueError:
+                self.extracted_at = datetime.utcnow()
+
         # Clamp scores to valid range
         self.importance = max(0.0, min(1.0, self.importance))
         self.confidence = max(0.0, min(1.0, self.confidence))
