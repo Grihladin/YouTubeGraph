@@ -77,17 +77,30 @@ class RelationshipExtractor:
         # Phase 1: Intra-group relationships
         print("\n🔁 Phase 1: Intra-group relationships")
         intra_count = 0
+        empty_text_groups = []
+        
         for extracted_concepts in video_concepts:
+            # Debug: Check if group_text is populated
+            print(f"  📝 Group {extracted_concepts.group_id}: {len(extracted_concepts.concepts)} concepts, group_text length: {len(extracted_concepts.group_text)}")
+            
+            if not extracted_concepts.group_text:
+                empty_text_groups.append(extracted_concepts.group_id)
+            
             relationships = self.intra_group_detector.detect_relationships(
                 extracted_concepts
             )
             all_relationships.extend(relationships)
             intra_count += len(relationships)
+        
+        if empty_text_groups:
+            print(f"  ⚠️  WARNING: {len(empty_text_groups)} groups have empty group_text: {empty_text_groups}")
+            print(f"     This will prevent relationship detection. Ensure groups are loaded with their text.")
 
         print(f"  ✓ Found {intra_count} intra-group relationships")
 
         # Phase 2: Inter-group relationships (across groups in same video)
         print("\n🔗 Phase 2: Inter-group relationships")
+        print(f"  📊 Comparing {len(video_concepts)} groups")
         inter_count = 0
 
         relationships = self.inter_group_detector.detect_relationships(
@@ -116,11 +129,12 @@ class RelationshipExtractor:
 
         return result
 
-    def extract_from_graph(self, video_id: str) -> ExtractedRelationships:
+    def extract_from_graph(self, video_id: str, groups_json_path: Optional[Path] = None) -> ExtractedRelationships:
         """Extract relationships from concepts stored in Neo4j for a single video.
 
         Args:
             video_id: Video ID to process
+            groups_json_path: Optional path to groups JSON file to load group text
 
         Returns:
             ExtractedRelationships containing all detected relationships
@@ -136,16 +150,31 @@ class RelationshipExtractor:
         if not concepts_list:
             raise ValueError(f"No concepts found for video {video_id}")
 
+        # Load group texts from JSON if provided
+        group_texts: dict[int, str] = {}
+        if groups_json_path and groups_json_path.exists():
+            print(f"📄 Loading group texts from {groups_json_path}...")
+            with open(groups_json_path, encoding="utf-8") as f:
+                groups_data = json.load(f)
+                for group in groups_data.get("groups", []):
+                    group_texts[group["group_id"]] = group["text"]
+            print(f"  ✓ Loaded text for {len(group_texts)} groups")
+
         grouped: dict[int, list[Concept]] = defaultdict(list)
         for concept in concepts_list:
             grouped[concept.group_id].append(concept)
 
         all_extracted_concepts: list[ExtractedConcepts] = []
         for group_id, concepts in sorted(grouped.items()):
+            # Use loaded group text or empty string
+            group_text = group_texts.get(group_id, "")
+            if not group_text:
+                print(f"⚠️  Warning: No text found for group {group_id}")
+            
             extracted = ExtractedConcepts(
                 video_id=video_id,
                 group_id=group_id,
-                group_text="",
+                group_text=group_text,
                 concepts=concepts,
             )
             all_extracted_concepts.append(extracted)

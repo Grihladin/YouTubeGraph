@@ -73,7 +73,10 @@ class YouTubeGraphPipeline:
         )
 
         # Vector store service
-        self.weaviate_client.connect(openai_api_key=self.config.openai.api_key)
+        # IMPORTANT: Weaviate needs the actual OpenAI key, not LLM_BINDING key
+        import os
+        weaviate_openai_key = os.getenv("OPENAI_API_KEY")  # Get OpenAI key directly, not LLM_BINDING
+        self.weaviate_client.connect(openai_api_key=weaviate_openai_key)
         segment_repository = SegmentRepository(
             self.weaviate_client, self.config.weaviate.collection_name
         )
@@ -310,7 +313,7 @@ def main():
 
     try:
         # Process a single video
-        result = pipeline.process_video("https://www.youtube.com/watch?v=3T9hNqr-Aic")
+        result = pipeline.process_video("https://www.youtube.com/watch?v=1Hp5Z2QDsKw")
 
         if result.success:
             print(f"\n✅ Successfully processed video {result.video_id}")
