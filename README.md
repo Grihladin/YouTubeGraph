@@ -26,10 +26,9 @@ YouTubeGraph/
 │       ├── weaviate_uploader.py  # Weaviate integration
 │       └── segment_grouper.py    # Semantic grouping algorithm
 │
-├── scripts/                      # Executable scripts
-│   ├── pipeline.py              # End-to-end pipeline
-│   ├── run_grouping.py          # Batch grouping
-│   ├── test_grouping.py         # Single video test
+├── scripts/                      # Executable scripts  
+│   ├── pipeline.py              # End-to-end processing pipeline
+│   ├── test_groups_quality.py   # Main quality validation (⭐ primary test)
 │   ├── visualize_groups.py      # Analytics & visualization
 │   └── diagnose_embeddings.py   # Embedding quality diagnostics
 │
@@ -158,26 +157,29 @@ This automatically:
 - ✅ Groups segments semantically
 - ✅ Saves groups to `output/groups/`
 
-#### Grouping Existing Videos
+#### Test Grouping Quality ⭐
 
 ```bash
-# Group videos already in Weaviate
-python scripts/run_grouping.py
+# Test grouping quality (comprehensive analysis)
+python scripts/test_groups_quality.py VIDEO_ID
 
-# With tuned parameters (for better cohesion)
-python scripts/run_tuned_grouping.py
-
-# Test single video with diagnostics
-python scripts/test_grouping.py VIDEO_ID --verbose
+# Test multiple videos
+python scripts/test_groups_quality.py VIDEO_ID1 VIDEO_ID2 VIDEO_ID3
 ```
+
+**This is your main quality validation tool!** It provides:
+- Quality score (0-4 scale)
+- Cohesion metrics
+- Timeline visualization
+- Sample group inspection
 
 #### Analysis & Diagnostics
 
 ```bash
-# Visualize grouping quality
+# Visualize existing groups
 python scripts/visualize_groups.py
 
-# Diagnose embedding similarities (tune hyperparameters)
+# Diagnose low quality issues
 python scripts/diagnose_embeddings.py VIDEO_ID
 ```
 

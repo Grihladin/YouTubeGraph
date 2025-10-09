@@ -77,13 +77,25 @@ class YouTubeToWeaviatePipeline:
         # Initialize grouper if enabled
         self.grouper = None
         if self.enable_grouping:
-            grouping_params = grouping_params or {}
+            # Use tuned parameters by default for better quality
+            tuned_defaults = {
+                "k_neighbors": 8,
+                "neighbor_threshold": 0.80,  # Stricter neighbor selection
+                "adjacent_threshold": 0.70,  # Stricter joining threshold
+                "temporal_tau": 150.0,
+                "max_group_words": 700,  # Smaller, more focused groups
+                "min_group_segments": 2,
+                "merge_centroid_threshold": 0.85,  # Less aggressive merging
+            }
+            # Override defaults with user-provided params
+            final_params = {**tuned_defaults, **(grouping_params or {})}
+            
             self.grouper = SegmentGrouper(
                 weaviate_url=self.weaviate_url,
                 weaviate_api_key=self.weaviate_api_key,
                 openai_api_key=self.openai_api_key,
                 collection_name=self.collection_name,
-                **grouping_params,
+                **final_params,
             )
 
     def process_video(
@@ -119,7 +131,11 @@ class YouTubeToWeaviatePipeline:
 
         # Step 1 & 2 & 3: Fetch, punctuate, and chunk transcript
         print("📥 Step 1-3: Fetching transcript and processing...")
-        job = TranscriptJob(youtube_url=youtube_url, languages=languages)
+        job = TranscriptJob(
+            youtube_url=youtube_url,
+            languages=languages,
+            output_dir=Path("output/transcripts")  # Save to output/transcripts/
+        )
 
         try:
             transcript_result = self.punctuation_worker(job)
@@ -248,7 +264,7 @@ def main():
 
     try:
         # Single video - full processing
-        youtube_url = "https://www.youtube.com/watch?v=zc9ajtpaS6k"
+        youtube_url = "https://www.youtube.com/watch?v=CUS6ABgI1As"
         result = pipeline.process_video(youtube_url)
 
         print(f"\n📊 Results:")

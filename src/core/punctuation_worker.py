@@ -30,7 +30,7 @@ class TranscriptJob:
 
     youtube_url: str
     output_path: Optional[Path] = None
-    output_dir: Path = field(default_factory=lambda: Path("Transcripts"))
+    output_dir: Path = field(default_factory=lambda: Path("output/transcripts"))
     languages: Optional[List[str]] = None
 
 
