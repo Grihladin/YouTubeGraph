@@ -12,9 +12,9 @@ from typing import Optional
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
+sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.neo4j_graph import Neo4jGraph  # noqa: E402
+from src.infrastructure.neo4j.neo4j_graph import Neo4jGraph  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
