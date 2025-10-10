@@ -1,125 +1,48 @@
 {
   "relationships": [
     {
-      "id": "57a6333b-75c9-5184-a7a3-90a22d61788b",
-      "source_concept_id": "fd021e68-4e6e-55ff-ac5a-ccd69e17d057",
-      "target_concept_id": "b975c199-c5a9-5fee-8dd0-8f5c835523ad",
-      "type": "exemplifies",
-      "confidence": 0.95,
-      "evidence": "faster. So that's going to be a win for VS Code, for example, and editors like that. PC cores, together with the ecores, which are efficiency cores, add up to 16 cores. total Eores add more efficiency tricks like nanoe and loop stream gating. Basically, the net effect is that it's supposed to be snappier single thread and steadier multi-thread at lower watts. Now the GPU is going to have some nice updates. There is a brand new architecture, the XC3 GPU. This XE3 GPU tile can have either four cores or 12 XC cores. There's going to be three different configurations of this chip: 1, 2 and three. This is the big one right here. So bigger caches, better utilization, Plus XMX engines for INT8, FP16, BF16, TF32.. These are the matrix multiplication engines. That's going to be useful for quantiz 7B to 34B local models without an eGPU. So we're still going to be size limited, as we typically are on iGPUs, but it's supposed to be faster. NPU is another story. NPUs are very vendor specific. That'",
+      "id": "e4531c9a-49a5-5cff-9710-5a010416b43e",
+      "source_concept_id": "c9ac7584-d5cd-4b19-9caa-8ecb948cf35f",
+      "target_concept_id": "f3aa8ea8-bbd6-40ba-93a3-64751b6e60fb",
+      "type": "uses",
+      "confidence": 0.666,
+      "evidence": "me to test: Open veno versus iGPU versus, uh, stable diffusion or NPU whatever. Just just wr",
       "detection_method": "pattern_matching",
       "source_video_id": "1Hp5Z2QDsKw",
-      "source_group_id": 1,
+      "source_group_id": 4,
       "target_video_id": "1Hp5Z2QDsKw",
-      "target_group_id": 1,
+      "target_group_id": 4,
       "temporal_distance": 0.0,
-      "extracted_at": "2025-10-09T22:57:00.386641"
+      "extracted_at": "2025-10-10T00:06:35.288251"
     },
     {
-      "id": "51a9bbee-3374-5267-adc0-3d94e5c99346",
-      "source_concept_id": "9d0d62fc-1846-538e-bc76-5b6b72643e6e",
-      "target_concept_id": "d2ad5fff-8bcd-577b-aa90-6abbcb1cf7aa",
-      "type": "refines",
-      "confidence": 0.8925,
-      "evidence": "Lake uses a lot of power, but the performance is actually really good, And Panther Lake is supposed to combine those two things in one chip. There's a whole new revamped runtime that can route AI wor",
-      "detection_method": "cue_phrase",
+      "id": "6a02b104-06f8-508a-a915-2251f004aa47",
+      "source_concept_id": "f3aa8ea8-bbd6-40ba-93a3-64751b6e60fb",
+      "target_concept_id": "c9ac7584-d5cd-4b19-9caa-8ecb948cf35f",
+      "type": "uses",
+      "confidence": 0.666,
+      "evidence": "me to test: Open veno versus iGPU versus, uh, stable diffusion or NPU whatever. Just just wr",
+      "detection_method": "pattern_matching",
       "source_video_id": "1Hp5Z2QDsKw",
-      "source_group_id": 0,
+      "source_group_id": 4,
       "target_video_id": "1Hp5Z2QDsKw",
       "target_group_id": 4,
-      "temporal_distance": 734.7081428571428,
-      "extracted_at": "2025-10-09T22:57:00.895476"
-    },
-    {
-      "id": "c15b4163-2200-5783-b444-4f48f25e8e27",
-      "source_concept_id": "ebc0c193-b84e-5c85-ba1d-e87c220d9db2",
-      "target_concept_id": "d2ad5fff-8bcd-577b-aa90-6abbcb1cf7aa",
-      "type": "refines",
-      "confidence": 0.8625,
-      "evidence": "Lake uses a lot of power, but the performance is actually really good, And Panther Lake is supposed to combine those two things in one chip. There's a whole new revamped runtime that can route AI wor",
-      "detection_method": "cue_phrase",
-      "source_video_id": "1Hp5Z2QDsKw",
-      "source_group_id": 0,
-      "target_video_id": "1Hp5Z2QDsKw",
-      "target_group_id": 4,
-      "temporal_distance": 734.7081428571428,
-      "extracted_at": "2025-10-09T22:57:00.901496"
-    },
-    {
-      "id": "c7023733-4cae-59d2-952c-92f23955fee8",
-      "source_concept_id": "386fb587-6430-5a11-a69a-48ce52e6dde0",
-      "target_concept_id": "d2ad5fff-8bcd-577b-aa90-6abbcb1cf7aa",
-      "type": "refines",
-      "confidence": 0.87,
-      "evidence": "Lake uses a lot of power, but the performance is actually really good, And Panther Lake is supposed to combine those two things in one chip. There's a whole new revamped runtime that can route AI wor",
-      "detection_method": "cue_phrase",
-      "source_video_id": "1Hp5Z2QDsKw",
-      "source_group_id": 0,
-      "target_video_id": "1Hp5Z2QDsKw",
-      "target_group_id": 4,
-      "temporal_distance": 734.7081428571428,
-      "extracted_at": "2025-10-09T22:57:00.907248"
-    },
-    {
-      "id": "6b508044-cd48-5961-955f-20e48ad59046",
-      "source_concept_id": "58878a86-b210-5d62-9c8d-c0e8321f56fa",
-      "target_concept_id": "d2ad5fff-8bcd-577b-aa90-6abbcb1cf7aa",
-      "type": "refines",
-      "confidence": 0.8625,
-      "evidence": "Lake uses a lot of power, but the performance is actually really good, And Panther Lake is supposed to combine those two things in one chip. There's a whole new revamped runtime that can route AI wor",
-      "detection_method": "cue_phrase",
-      "source_video_id": "1Hp5Z2QDsKw",
-      "source_group_id": 0,
-      "target_video_id": "1Hp5Z2QDsKw",
-      "target_group_id": 4,
-      "temporal_distance": 734.7081428571428,
-      "extracted_at": "2025-10-09T22:57:00.912991"
-    },
-    {
-      "id": "7ab39eaf-fe61-548e-837b-f3ce0e5636da",
-      "source_concept_id": "1153ae6b-6683-578d-bb10-02db8833ebbe",
-      "target_concept_id": "d2ad5fff-8bcd-577b-aa90-6abbcb1cf7aa",
-      "type": "refines",
-      "confidence": 0.84,
-      "evidence": "Lake uses a lot of power, but the performance is actually really good, And Panther Lake is supposed to combine those two things in one chip. There's a whole new revamped runtime that can route AI wor",
-      "detection_method": "cue_phrase",
-      "source_video_id": "1Hp5Z2QDsKw",
-      "source_group_id": 0,
-      "target_video_id": "1Hp5Z2QDsKw",
-      "target_group_id": 4,
-      "temporal_distance": 734.7081428571428,
-      "extracted_at": "2025-10-09T22:57:00.918689"
-    },
-    {
-      "id": "757ea161-e4ef-5deb-9b6d-5f817c5e110d",
-      "source_concept_id": "d423b1f9-f14e-5b66-9d12-b24bfd702d50",
-      "target_concept_id": "d2ad5fff-8bcd-577b-aa90-6abbcb1cf7aa",
-      "type": "refines",
-      "confidence": 0.81,
-      "evidence": "Lake uses a lot of power, but the performance is actually really good, And Panther Lake is supposed to combine those two things in one chip. There's a whole new revamped runtime that can route AI wor",
-      "detection_method": "cue_phrase",
-      "source_video_id": "1Hp5Z2QDsKw",
-      "source_group_id": 0,
-      "target_video_id": "1Hp5Z2QDsKw",
-      "target_group_id": 4,
-      "temporal_distance": 734.7081428571428,
-      "extracted_at": "2025-10-09T22:57:00.924341"
+      "temporal_distance": 0.0,
+      "extracted_at": "2025-10-10T00:06:35.291322"
     }
   ],
   "metadata": {
-    "total_relationships": 7,
+    "total_relationships": 2,
     "video_ids": [
       "1Hp5Z2QDsKw"
     ],
-    "avg_confidence": 0.8696428571428572,
+    "avg_confidence": 0.666,
     "type_distribution": {
-      "exemplifies": 1,
-      "refines": 6
+      "uses": 2
     },
     "detection_method_distribution": {
-      "pattern_matching": 1,
-      "cue_phrase": 6
+      "pattern_matching": 2
     },
-    "extraction_time": "2025-10-09T22:57:01.133025"
+    "extraction_time": "2025-10-10T00:06:35.399887"
   }
 }

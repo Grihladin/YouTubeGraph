@@ -12,67 +12,40 @@ from dotenv import load_dotenv
 import openai
 
 from src.domain.concept import Concept, ConceptMention, ConceptType, ExtractedConcepts
+from src.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 # Load environment variables
 load_dotenv()
 
 
 class ConceptExtractor:
-    """Extract concepts from transcript groups using LLM."""
+    """Extract candidate concepts from transcript groups using LLM (Pass 1 of two-pass system)."""
 
-    # Prompt template for concept extraction
-    EXTRACTION_PROMPT = """You are an expert knowledge graph curator. Analyze the following transcript segment and extract the key concepts discussed.
+    # Prompt template for CANDIDATE extraction (Pass 1)
+    CANDIDATE_EXTRACTION_PROMPT = """Extract 1-5 most important concepts from this transcript segment.
 
-**Video ID:** {video_id}
-**Group ID:** {group_id}
-**Time Range:** {start_time:.1f}s - {end_time:.1f}s
-**Duration:** {duration:.1f}s
-
-**Transcript Text:**
+**Transcript ({start_time:.0f}s-{end_time:.0f}s):**
 {text}
 
-**Your Task:**
-Extract 5-7 key concepts from this segment. For each concept:
-
-1. **Name**: Canonical name (2-6 words, title case)
-2. **Definition**: Clear 1-3 sentence explanation
-3. **Type**: One of: Person, Organization, Technology, Method, Problem, Solution, Concept, Metric, Dataset, Event, Place
-4. **Importance**: Score 0.0-1.0 (how central is this to the video?)
-   - 0.9-1.0: Main topic/thesis
-   - 0.7-0.8: Major supporting concept
-   - 0.5-0.6: Relevant detail
-   - 0.3-0.4: Minor reference
-5. **Confidence**: Score 0.0-1.0 (how clear/explicit is this in the text?)
-   - 0.9-1.0: Explicitly named and defined
-   - 0.7-0.8: Clearly implied
-   - 0.5-0.6: Inferred with some ambiguity
-6. **Aliases**: Alternative names/spellings (if any)
-
-**Output Format:**
-Respond ONLY with valid JSON in this exact structure:
-
-```json
+Output JSON:
 {{
   "concepts": [
     {{
-      "name": "Example Concept",
-      "definition": "A clear explanation of what this concept means.",
+      "name": "Concept Name",
+      "definition": "Brief explanation",
       "type": "Concept",
       "importance": 0.8,
       "confidence": 0.9,
-      "aliases": ["alternative name", "another name"]
+      "aliases": []
     }}
   ]
 }}
-```
 
-**Guidelines:**
-- Focus on substantive ideas, not trivial mentions
-- Be specific and concrete in definitions
-- Ensure names are concise but descriptive
-- Importance reflects global significance to the entire video
-- Confidence reflects clarity of extraction from THIS text
-- Aliases are optional but valuable for recall
+Types: Concept, Technology, Person, Organization, Method, Problem, Solution, Metric, Event, Place
+Importance: 0.9-1.0=core, 0.7-0.8=major, 0.5-0.6=supporting
+Confidence: 0.9-1.0=explicit, 0.7-0.8=clear, 0.5-0.6=inferred
 """
 
     def __init__(
@@ -124,7 +97,10 @@ Respond ONLY with valid JSON in this exact structure:
         start_time: float,
         end_time: float,
     ) -> ExtractedConcepts:
-        """Extract concepts from a single group.
+        """Extract candidate concepts from a single group (Pass 1 of two-pass system).
+
+        This extracts ALL potential concepts without filtering. The consolidation
+        phase will merge duplicates and refine the final set.
 
         Args:
             video_id: Video identifier
@@ -134,13 +110,13 @@ Respond ONLY with valid JSON in this exact structure:
             end_time: End timestamp (seconds)
 
         Returns:
-            ExtractedConcepts object with all extracted concepts
+            ExtractedConcepts object with candidate concepts
 
         Raises:
             ExtractionError: If extraction fails
         """
-        # Format the prompt
-        prompt = self.EXTRACTION_PROMPT.format(
+        # Format the prompt (using candidate extraction prompt)
+        prompt = self.CANDIDATE_EXTRACTION_PROMPT.format(
             video_id=video_id,
             group_id=group_id,
             start_time=start_time,
@@ -156,16 +132,31 @@ Respond ONLY with valid JSON in this exact structure:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an expert at extracting structured knowledge from text. Always respond with valid JSON only.",
+                        "content": "Output ONLY valid JSON. No thinking, no explanation.",
                     },
                     {"role": "user", "content": prompt},
                 ],
                 temperature=self.temperature,
-                max_tokens=2000,
+                max_tokens=8000,  # High limit for reasoning models
             )
 
-            # Extract response
-            raw_response = response.choices[0].message.content
+            # Extract response - handle reasoning models (like Cloud.ru's o1-style API)
+            message = response.choices[0].message
+
+            # Try content first, fall back to reasoning_content
+            raw_response = message.content
+            if (
+                not raw_response
+                and hasattr(message, "reasoning_content")
+                and message.reasoning_content
+            ):
+                # Reasoning model - extract JSON from reasoning content
+                raw_response = message.reasoning_content
+                logger.warning(
+                    f"LLM returned reasoning_content instead of content. "
+                    f"This suggests the model is in reasoning mode and may need higher max_tokens. "
+                    f"Finish reason: {response.choices[0].finish_reason}"
+                )
 
             # Parse JSON response
             concepts_data = self._parse_response(raw_response)
@@ -207,6 +198,10 @@ Respond ONLY with valid JSON in this exact structure:
         Raises:
             ExtractionError: If parsing fails
         """
+        # Check if response is None or empty
+        if not raw_response:
+            raise ExtractionError("LLM returned empty or None response")
+
         # Try to find JSON in the response (in case LLM adds extra text)
         json_match = re.search(r"\{.*\}", raw_response, re.DOTALL)
         if json_match:

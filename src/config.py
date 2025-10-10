@@ -103,6 +103,25 @@ class GroupingConfig:
 
 
 @dataclass
+class ConceptExtractionConfig:
+    """Configuration for two-pass concept extraction."""
+
+    # Two-pass system parameters (always enabled now)
+    consolidation_temperature: float = 0.2  # Lower for more consistent consolidation
+    extraction_temperature: float = 0.3  # Slightly higher for diverse candidates
+
+    # Timing
+    delay_seconds: float = 0.5  # Delay between group extractions
+
+    # Quality thresholds
+    min_candidate_confidence: float = 0.3  # Very inclusive for Pass 1
+    min_final_confidence: float = 0.5  # More selective for Pass 2
+
+    # Target concept counts
+    expected_final_concepts_per_minute: float = 3.0  # ~15-30 for 5-10 min video
+
+
+@dataclass
 class PipelineConfig:
     """Configuration for the entire pipeline."""
 
@@ -113,7 +132,9 @@ class PipelineConfig:
 
     # Processing parameters
     min_relationship_confidence: float = 0.6
-    concept_delay_seconds: float = 0.5
+    concept_delay_seconds: float = (
+        0.5  # DEPRECATED: use ConceptExtractionConfig.delay_seconds
+    )
     punctuation_model: str = "oliverguhr/fullstop-punctuation-multilingual-base"
 
     # Output paths
@@ -140,6 +161,7 @@ class AppConfig:
     neo4j: Neo4jConfig
     openai: OpenAIConfig
     grouping: GroupingConfig
+    concept_extraction: ConceptExtractionConfig
     pipeline: PipelineConfig
 
     @classmethod
@@ -150,6 +172,7 @@ class AppConfig:
             neo4j=Neo4jConfig.from_env(),
             openai=OpenAIConfig.from_env(),
             grouping=GroupingConfig(),
+            concept_extraction=ConceptExtractionConfig(),
             pipeline=PipelineConfig(),
         )
 
